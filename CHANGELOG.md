@@ -5,6 +5,8 @@ All notable changes to this project will be documented in this file.
 The format is inspired by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses pre-1.0 semantic versioning tags.
 
 ## [Unreleased]
+
+## [0.3.0] - 2026-03-14
 ### Added
 - `agent guide` subcommand for read-only workflow tutoring that maps a request to the recommended xcodecli tool sequence and prints exact next commands.
 - `agent demo` subcommand for a safe read-only onboarding flow that runs `doctor`, lists live MCP tools, calls `XcodeListWindows`, and prints suggested next commands.
