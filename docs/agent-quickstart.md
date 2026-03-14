@@ -9,7 +9,22 @@ cd /Volumes/eyedisk/develop/oozoofrog/xcodemcp-cli
 ./scripts/build.sh
 ```
 
-## 2. Check the environment
+## 2. Fastest safe live demo
+
+```bash
+./xcodemcp agent demo
+./xcodemcp agent demo --json
+```
+
+What this does:
+- runs `doctor`
+- discovers the live MCP tool catalog
+- safely calls `XcodeListWindows`
+- prints the next commands for `XcodeLS` and `XcodeRead`
+
+`agent demo` is read-only. It does **not** build, test, write, update, move, or remove project files.
+
+## 3. Check the environment
 
 ```bash
 ./xcodemcp doctor --json
@@ -21,15 +36,16 @@ Look for:
 - a running Xcode PID or at least an open Xcode process
 - LaunchAgent socket reachability after the first tools command
 
-## 3. Discover available tools
+## 4. Discover available tools
 
 ```bash
+./xcodemcp tools list
 ./xcodemcp tools list --json
 ```
 
 If this is the first `tools` request, `xcodemcp` may install and bootstrap a per-user LaunchAgent automatically.
 
-## 4. Inspect one tool
+## 5. Inspect one tool
 
 ```bash
 ./xcodemcp tool inspect XcodeListWindows
@@ -38,7 +54,7 @@ If this is the first `tools` request, `xcodemcp` may install and bootstrap a per
 
 Use `tool inspect` to confirm the tool name, description, and `inputSchema` before calling it.
 
-## 5. Call a tool
+## 6. Call a tool
 
 Inline JSON:
 
@@ -61,7 +77,19 @@ Read the payload from stdin:
 printf '{}' | ./xcodemcp tool call XcodeListWindows --json-stdin
 ```
 
-## 6. Troubleshooting
+## 7. End-to-end read-only example
+
+Use the `tabIdentifier` returned by `XcodeListWindows` to continue the flow:
+
+```bash
+./xcodemcp tool call XcodeListWindows --json '{}'
+./xcodemcp tool call XcodeLS --json '{"tabIdentifier":"<tabIdentifier from above>","path":""}'
+./xcodemcp tool call XcodeRead --json '{"tabIdentifier":"<tabIdentifier from above>","filePath":"<path from XcodeLS>"}'
+```
+
+If you want the next mutating step after discovery, that is where you would choose something like `BuildProject` or `RunAllTests`.
+
+## 8. Troubleshooting
 
 ### The tool call times out
 - Verify Xcode is open and a workspace/project window is visible.

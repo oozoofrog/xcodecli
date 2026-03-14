@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is inspired by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses pre-1.0 semantic versioning tags.
 
 ## [Unreleased]
+### Added
+- `agent demo` subcommand for a safe read-only onboarding flow that runs `doctor`, lists live MCP tools, calls `XcodeListWindows`, and prints suggested next commands.
+
+### Changed
+- Improved first-run onboarding docs and root CLI help with a faster demo-oriented path for humans and agents.
 
 ## [0.2.1] - 2026-03-14
 ### Added

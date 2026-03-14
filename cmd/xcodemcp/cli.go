@@ -20,6 +20,7 @@ const (
 	commandToolCall       commandName = "tool-call"
 	commandToolInspect    commandName = "tool-inspect"
 	commandAgentStatus    commandName = "agent-status"
+	commandAgentDemo      commandName = "agent-demo"
 	commandAgentStop      commandName = "agent-stop"
 	commandAgentUninstall commandName = "agent-uninstall"
 	commandAgentRun       commandName = "agent-run"
@@ -107,6 +108,8 @@ func parseHelp(args []string) (cliConfig, string, error) {
 		}
 		if len(args) == 2 {
 			switch args[1] {
+			case "demo":
+				return cliConfig{}, agentDemoUsage(), errUsageRequested
 			case "status":
 				return cliConfig{}, agentStatusUsage(), errUsageRequested
 			case "stop":
@@ -158,6 +161,10 @@ func parseAgentCLI(args []string) (cliConfig, string, error) {
 		return cliConfig{}, agentUsage(), errUsageRequested
 	}
 	switch args[0] {
+	case "demo":
+		cfg, err := parseAgentDemoFlags("xcodemcp agent demo", args[1:])
+		cfg.Command = commandAgentDemo
+		return cfg, agentDemoUsage(), err
 	case "status":
 		cfg, err := parseAgentStatusFlags("xcodemcp agent status", args[1:])
 		cfg.Command = commandAgentStatus
@@ -325,6 +332,32 @@ func parseAgentStatusFlags(name string, args []string) (cliConfig, error) {
 	return cfg, nil
 }
 
+func parseAgentDemoFlags(name string, args []string) (cliConfig, error) {
+	fs := newFlagSet(name)
+	cfg := cliConfig{Command: commandAgentDemo, Timeout: 30 * time.Second}
+	help := false
+	fs.StringVar(&cfg.XcodePID, "xcode-pid", "", "")
+	fs.StringVar(&cfg.SessionID, "session-id", "", "")
+	fs.BoolVar(&cfg.Debug, "debug", false, "")
+	fs.BoolVar(&cfg.JSONOutput, "json", false, "")
+	fs.DurationVar(&cfg.Timeout, "timeout", 30*time.Second, "")
+	fs.BoolVar(&help, "h", false, "")
+	fs.BoolVar(&help, "help", false, "")
+	if err := fs.Parse(args); err != nil {
+		return cliConfig{}, err
+	}
+	if help {
+		return cliConfig{}, errUsageRequested
+	}
+	if cfg.Timeout <= 0 {
+		return cliConfig{}, errors.New("--timeout must be greater than 0")
+	}
+	if fs.NArg() != 0 {
+		return cliConfig{}, fmt.Errorf("unexpected positional arguments: %s", strings.Join(fs.Args(), " "))
+	}
+	return cfg, nil
+}
+
 func parseAgentSimpleFlags(name string, args []string) (cliConfig, error) {
 	fs := newFlagSet(name)
 	cfg := cliConfig{}
@@ -430,13 +463,14 @@ func rootUsage() string {
 
 START HERE:
   For humans:
-    1. xcodemcp doctor --json
-    2. xcodemcp agent status --json
-    3. xcodemcp tools list --json
-    4. xcodemcp tool inspect <name> --json
-    5. xcodemcp tool call <name> --json '{...}'
+    1. xcodemcp agent demo
+    2. xcodemcp doctor --json
+    3. xcodemcp tools list
+    4. xcodemcp tool inspect XcodeListWindows --json
+    5. xcodemcp tool call XcodeListWindows --json '{}'
 
   For agents:
+    - Run a safe live onboarding demo with "xcodemcp agent demo --json".
     - Discover command shapes with "xcodemcp help <command>".
     - Discover runtime health with "xcodemcp doctor --json".
     - Discover LaunchAgent state with "xcodemcp agent status --json".
@@ -456,6 +490,7 @@ USAGE:
   xcodemcp tools list [--json] [--timeout 30s] [--xcode-pid PID] [--session-id UUID] [--debug]
   xcodemcp tool inspect <name> [--json] [--xcode-pid PID] [--session-id UUID] [--debug]
   xcodemcp tool call <name> (--json '{...}' | --json @payload.json | --json-stdin) [--timeout 30s] [--xcode-pid PID] [--session-id UUID] [--debug]
+  xcodemcp agent demo [--json] [--timeout 30s] [--xcode-pid PID] [--session-id UUID] [--debug]
   xcodemcp agent status [--json]
   xcodemcp agent stop
   xcodemcp agent uninstall
@@ -587,17 +622,39 @@ NOTES:
 
 func agentUsage() string {
 	return `The agent subcommands inspect or manage the LaunchAgent used by tools commands.
-Use status for diagnostics, stop to end the running process, and uninstall to remove local LaunchAgent state.
+Use demo for a safe read-only onboarding flow, status for diagnostics, stop to end the running process, and uninstall to remove local LaunchAgent state.
 
 USAGE:
+  xcodemcp agent demo [--json] [--timeout 30s] [--xcode-pid PID] [--session-id UUID] [--debug]
   xcodemcp agent status [--json]
   xcodemcp agent stop
   xcodemcp agent uninstall
 
 SUBCOMMANDS:
+  demo         Run a safe read-only onboarding demo
   status       Show LaunchAgent installation and runtime state
   stop         Ask the running LaunchAgent process to stop
   uninstall    Remove the LaunchAgent plist and local agent runtime files
+`
+}
+
+func agentDemoUsage() string {
+	return `agent demo runs a safe read-only onboarding flow for first-time humans and agents.
+It reuses doctor output, discovers the live MCP tool catalog, and safely calls XcodeListWindows.
+
+USAGE:
+  xcodemcp agent demo [--json] [--timeout 30s] [--xcode-pid PID] [--session-id UUID] [--debug]
+
+FLAGS:
+  --json               Print the full demo report as pretty JSON
+  --timeout DURATION   Fail MCP discovery/call steps if they do not finish in time (default 30s)
+  --xcode-pid PID      Override MCP_XCODE_PID
+  --session-id UUID    Override MCP_XCODE_SESSION_ID
+  --debug              Emit convenience-command debug logs to stderr
+  -h, --help           Show help
+
+NOTES:
+  This command is non-mutating. It only runs doctor, tools list, agent status, and XcodeListWindows.
 `
 }
 
