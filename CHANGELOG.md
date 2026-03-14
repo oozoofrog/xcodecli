@@ -5,6 +5,8 @@ All notable changes to this project will be documented in this file.
 The format is inspired by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses pre-1.0 semantic versioning tags.
 
 ## [Unreleased]
+
+## [0.3.1] - 2026-03-15
 ### Added
 - `xcodecli version` and `xcodecli --version` for printing the current CLI version.
 
