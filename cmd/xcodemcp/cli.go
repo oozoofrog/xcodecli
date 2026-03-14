@@ -43,8 +43,7 @@ var errUsageRequested = errors.New("usage requested")
 
 func parseCLI(args []string) (cliConfig, string, error) {
 	if len(args) == 0 {
-		cfg, err := parseBridgeFlags("xcodemcp", args)
-		return cfg, rootUsage(), err
+		return cliConfig{}, rootUsage(), errUsageRequested
 	}
 
 	switch args[0] {
@@ -429,6 +428,27 @@ func newFlagSet(name string) *flag.FlagSet {
 func rootUsage() string {
 	return `xcodemcp wraps xcrun mcpbridge for local macOS use.
 
+START HERE:
+  For humans:
+    1. xcodemcp doctor --json
+    2. xcodemcp agent status --json
+    3. xcodemcp tools list --json
+    4. xcodemcp tool inspect <name> --json
+    5. xcodemcp tool call <name> --json '{...}'
+
+  For agents:
+    - Discover command shapes with "xcodemcp help <command>".
+    - Discover runtime health with "xcodemcp doctor --json".
+    - Discover LaunchAgent state with "xcodemcp agent status --json".
+    - Discover available tools with "xcodemcp tools list --json".
+    - Discover per-tool schema with "xcodemcp tool inspect <name> --json".
+
+RUNTIME MODEL:
+  - "bridge" is raw passthrough to xcrun mcpbridge.
+  - "tools" and "tool" use a per-user LaunchAgent and local Unix socket RPC.
+  - The first tools request may install/bootstrap the LaunchAgent automatically.
+  - Xcode should be running, with at least one workspace/project window open.
+
 USAGE:
   xcodemcp [--xcode-pid PID] [--session-id UUID] [--debug]
   xcodemcp bridge [--xcode-pid PID] [--session-id UUID] [--debug]
@@ -441,7 +461,7 @@ USAGE:
   xcodemcp agent uninstall
 
 COMMANDS:
-  bridge    Run raw STDIO passthrough to xcrun mcpbridge (default)
+  bridge    Run raw STDIO passthrough to xcrun mcpbridge
   doctor    Run environment diagnostics
   tools     Convenience commands for listing tools
   tool      Convenience commands for inspecting or calling a tool
@@ -452,7 +472,10 @@ Use "xcodemcp help <command>" for command-specific help.
 }
 
 func bridgeUsage() string {
-	return `USAGE:
+	return `bridge sends stdin/stdout/stderr directly to xcrun mcpbridge.
+Use this when you already have an MCP-aware client and need raw transport.
+
+USAGE:
   xcodemcp [--xcode-pid PID] [--session-id UUID] [--debug]
   xcodemcp bridge [--xcode-pid PID] [--session-id UUID] [--debug]
 
@@ -465,7 +488,10 @@ FLAGS:
 }
 
 func doctorUsage() string {
-	return `USAGE:
+	return `doctor reports environment readiness for both humans and agents.
+Prefer --json when another tool or agent needs to parse the result.
+
+USAGE:
   xcodemcp doctor [--json] [--xcode-pid PID] [--session-id UUID]
 
 FLAGS:
@@ -477,7 +503,10 @@ FLAGS:
 }
 
 func toolsUsage() string {
-	return `USAGE:
+	return `Use tools list to discover the names exposed by Xcode through MCP.
+Inspect a tool before calling it if you need its schema or description.
+
+USAGE:
   xcodemcp tools list [--json] [--timeout 30s] [--xcode-pid PID] [--session-id UUID] [--debug]
 
 SUBCOMMANDS:
@@ -486,7 +515,10 @@ SUBCOMMANDS:
 }
 
 func toolsListUsage() string {
-	return `USAGE:
+	return `tools list discovers the current MCP tool catalog from Xcode.
+This is the primary entrypoint for both humans and agents to learn what is available.
+
+USAGE:
   xcodemcp tools list [--json] [--timeout 30s] [--xcode-pid PID] [--session-id UUID] [--debug]
 
 FLAGS:
@@ -503,7 +535,10 @@ NOTES:
 }
 
 func toolUsage() string {
-	return `USAGE:
+	return `Use tool inspect to learn what a tool expects, then tool call to execute it.
+Agents should usually inspect before calling unless they already cached the schema.
+
+USAGE:
   xcodemcp tool inspect <name> [--json] [--xcode-pid PID] [--session-id UUID] [--debug]
   xcodemcp tool call <name> (--json '{...}' | --json @payload.json | --json-stdin) [--timeout 30s] [--xcode-pid PID] [--session-id UUID] [--debug]
 
@@ -514,7 +549,10 @@ SUBCOMMANDS:
 }
 
 func toolInspectUsage() string {
-	return `USAGE:
+	return `tool inspect shows one tool's description and input schema.
+Use --json for machine-readable metadata or plain text for quick inspection.
+
+USAGE:
   xcodemcp tool inspect <name> [--json] [--xcode-pid PID] [--session-id UUID] [--debug]
 
 FLAGS:
@@ -527,7 +565,10 @@ FLAGS:
 }
 
 func toolCallUsage() string {
-	return `USAGE:
+	return `tool call executes one MCP tool with a JSON object payload.
+For large payloads prefer --json @file or --json-stdin instead of a long inline string.
+
+USAGE:
   xcodemcp tool call <name> (--json '{...}' | --json @payload.json | --json-stdin) [--timeout 30s] [--xcode-pid PID] [--session-id UUID] [--debug]
 
 FLAGS:
@@ -545,7 +586,10 @@ NOTES:
 }
 
 func agentUsage() string {
-	return `USAGE:
+	return `The agent subcommands inspect or manage the LaunchAgent used by tools commands.
+Use status for diagnostics, stop to end the running process, and uninstall to remove local LaunchAgent state.
+
+USAGE:
   xcodemcp agent status [--json]
   xcodemcp agent stop
   xcodemcp agent uninstall
@@ -558,25 +602,36 @@ SUBCOMMANDS:
 }
 
 func agentStatusUsage() string {
-	return `USAGE:
+	return `agent status reports LaunchAgent installation, socket reachability, and backend session state.
+Prefer --json when another agent or script needs to consume the result.
+
+USAGE:
   xcodemcp agent status [--json]
 `
 }
 
 func agentStopUsage() string {
-	return `USAGE:
+	return `agent stop asks the running LaunchAgent process to exit if it is currently alive.
+
+USAGE:
   xcodemcp agent stop
 `
 }
 
 func agentUninstallUsage() string {
-	return `USAGE:
+	return `agent uninstall removes the LaunchAgent plist and local runtime files.
+Use this if the LaunchAgent is stale or you want to reset local state.
+
+USAGE:
   xcodemcp agent uninstall
 `
 }
 
 func agentRunUsage() string {
-	return `USAGE:
+	return `agent run is an internal entrypoint used by the LaunchAgent plist.
+Most users and agents should not call it directly.
+
+USAGE:
   xcodemcp agent run --launch-agent [--idle-timeout 10m] [--debug]
 
 FLAGS:

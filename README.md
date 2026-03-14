@@ -18,9 +18,10 @@ PACKAGE=./cmd/xcodemcp ./scripts/build.sh
 
 ## Usage
 
-Raw bridge mode is the default. It forwards stdin/stdout/stderr directly to `xcrun mcpbridge`.
+Running `xcodemcp` with no arguments prints help. Use `bridge` for raw passthrough to `xcrun mcpbridge`.
 
 ```bash
+./xcodemcp
 ./xcodemcp --xcode-pid 12345
 ./xcodemcp bridge --session-id 11111111-1111-1111-1111-111111111111
 ```
