@@ -33,6 +33,16 @@ func TestParseCLIDefaultBridge(t *testing.T) {
 	}
 }
 
+func TestParseCLIWithoutArgsShowsHelp(t *testing.T) {
+	_, usage, err := parseCLI(nil)
+	if err != errUsageRequested {
+		t.Fatalf("err = %v, want errUsageRequested", err)
+	}
+	if !strings.Contains(usage, "START HERE:") {
+		t.Fatalf("usage missing root help banner: %q", usage)
+	}
+}
+
 func TestParseCLIDoctorJSON(t *testing.T) {
 	cfg, _, err := parseCLI([]string{"doctor", "--json"})
 	if err != nil {
@@ -116,6 +126,24 @@ func TestParseCLIHelp(t *testing.T) {
 	}
 	if !strings.Contains(usage, "tool inspect") {
 		t.Fatalf("usage missing tool inspect help: %q", usage)
+	}
+}
+
+func TestRootUsageIncludesHumanAndAgentGuidance(t *testing.T) {
+	usage := rootUsage()
+	for _, want := range []string{"START HERE:", "For humans:", "For agents:", "xcodemcp doctor --json", "xcodemcp tool inspect <name> --json"} {
+		if !strings.Contains(usage, want) {
+			t.Fatalf("root usage missing %q: %s", want, usage)
+		}
+	}
+}
+
+func TestDoctorUsageMentionsJSONForAgents(t *testing.T) {
+	usage := doctorUsage()
+	for _, want := range []string{"doctor reports environment readiness", "Prefer --json", "--json"} {
+		if !strings.Contains(usage, want) {
+			t.Fatalf("doctor usage missing %q: %s", want, usage)
+		}
 	}
 }
 
