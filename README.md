@@ -76,6 +76,18 @@ Inspect the LaunchAgent used by `tools` commands:
 - `codex/*`: implementation branches for agent-driven changes
 - Open pull requests from `codex/*` into `main`
 
+
+## Versioning strategy
+
+Starting after `v0.2.0`, the project will continue to use pre-1.0 semantic versioning tags with the following release policy:
+
+- `v0.2.1`, `v0.2.2`, ...: patch releases for bug fixes, CI/test hardening, documentation corrections, and internal refactors that do not intentionally expand the public CLI surface.
+- `v0.3.0`, `v0.4.0`, ...: minor releases for new commands, new flags, new output modes, default-behavior expansions, or materially new LaunchAgent / MCP capabilities.
+- Breaking CLI behavior is avoided when possible. Before `v1.0.0`, any unavoidable breaking change should ship in a new minor release and must be called out explicitly in `CHANGELOG.md` and the GitHub Release notes.
+- Releases should be cut from `main` only after CI is green.
+- Tags should remain annotated `vMAJOR.MINOR.PATCH` tags, and GitHub Releases should continue to use generated notes unless a release needs hand-written upgrade guidance.
+- The active maintenance line after this release is `v0.2.x`. Small fixes should prefer the next patch tag on that line before opening a new minor series.
+
 ## Notes
 
 - `--xcode-pid` overrides `MCP_XCODE_PID`.
