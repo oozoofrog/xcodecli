@@ -46,6 +46,15 @@ Running `xcodemcp` with no arguments prints help. Use `bridge` for raw passthrou
 ./xcodemcp bridge --session-id 11111111-1111-1111-1111-111111111111
 ```
 
+Fastest safe live onboarding demo:
+
+```bash
+./xcodemcp agent demo
+./xcodemcp agent demo --json
+```
+
+`agent demo` is read-only. It reuses `doctor`, discovers the live tool catalog, safely calls `XcodeListWindows`, and prints the next commands to try.
+
 Run environment diagnostics:
 
 ```bash
@@ -79,11 +88,28 @@ printf '{}' | ./xcodemcp tool call XcodeListWindows --json-stdin
 Inspect the LaunchAgent used by `tools` commands:
 
 ```bash
+./xcodemcp agent demo
 ./xcodemcp agent status
 ./xcodemcp agent status --json
 ./xcodemcp agent stop
 ./xcodemcp agent uninstall
 ```
+
+## LLM agent example flow
+
+If you want one concrete end-to-end sequence for a shell-driven agent:
+
+```bash
+./xcodemcp agent demo
+./xcodemcp tool inspect XcodeRead --json
+./xcodemcp tool call XcodeLS --json '{"tabIdentifier":"<tabIdentifier from above>","path":""}'
+./xcodemcp tool call XcodeRead --json '{"tabIdentifier":"<tabIdentifier from above>","filePath":"<path from XcodeLS>"}'
+```
+
+Notes:
+- Many Xcode MCP tools require a `tabIdentifier`.
+- `XcodeListWindows` is the normal way to discover that value.
+- `agent demo` runs `XcodeListWindows` safely and shows the next commands with placeholders.
 
 ## Agent onboarding
 

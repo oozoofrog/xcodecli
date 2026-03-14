@@ -237,6 +237,8 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 			return 1
 		}
 		return 0
+	case commandAgentDemo:
+		return runAgentDemo(ctx, cfg, env, stdout, stderr, agentCfg)
 	case commandAgentStatus:
 		status, err := defaultAgentStatusFunc(ctx, agentCfg)
 		if err != nil {
