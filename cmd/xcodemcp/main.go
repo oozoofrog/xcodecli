@@ -31,6 +31,9 @@ var defaultAgentStatusFunc = agent.StatusInfo
 var defaultAgentStopFunc = agent.Stop
 var defaultAgentUninstallFunc = agent.Uninstall
 var defaultAgentRunFunc = agent.RunServer
+var defaultDoctorRunFunc = func(ctx context.Context, opts doctor.Options) doctor.Report {
+	return doctor.NewInspector().Run(ctx, opts)
+}
 
 func main() {
 	os.Exit(run(context.Background(), os.Args[1:], os.Stdin, os.Stdout, os.Stderr, os.Environ()))
@@ -72,7 +75,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 			return 1
 		}
 		agentStatus, agentStatusErr := defaultAgentStatusFunc(ctx, agentCfg)
-		report := doctor.NewInspector().Run(ctx, doctor.Options{
+		report := defaultDoctorRunFunc(ctx, doctor.Options{
 			BaseEnv:        env,
 			XcodePID:       resolved.XcodePID,
 			SessionID:      resolved.SessionID,
