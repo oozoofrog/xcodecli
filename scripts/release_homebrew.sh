@@ -15,8 +15,8 @@ Usage:
   ./scripts/release_homebrew.sh <tag> [--tap-dir PATH] [--push] [--dry-run]
 
 Examples:
-  ./scripts/release_homebrew.sh v0.3.0 --tap-dir .tmp/homebrew-tap --dry-run
-  ./scripts/release_homebrew.sh v0.3.0 --push
+  ./scripts/release_homebrew.sh v0.3.1 --tap-dir .tmp/homebrew-tap --dry-run
+  ./scripts/release_homebrew.sh v0.3.1 --push
 
 Behavior:
   - Downloads the GitHub source tarball for the given tag
@@ -96,12 +96,13 @@ class Xcodecli < Formula
   depends_on "go" => :build
 
   def install
-    system "go", "build", *std_go_args(output: bin/"xcodecli"), "./cmd/xcodecli"
+    system "go", "build", *std_go_args(output: bin/"xcodecli", ldflags: "-s -w -X main.cliVersion=v#{version}"), "./cmd/xcodecli"
   end
 
   test do
     output = shell_output("#{bin}/xcodecli help")
     assert_match "xcodecli wraps xcrun mcpbridge", output
+    assert_match "v#{version}", shell_output("#{bin}/xcodecli version")
   end
 end
 FORMULA
@@ -223,6 +224,8 @@ fi
 
 log "running formula smoke test"
 "$(brew --prefix)/bin/${FORMULA_NAME}" help >/dev/null
+version_output="$("$(brew --prefix)/bin/${FORMULA_NAME}" version | tr -d '\r')"
+[[ "$version_output" == "${FORMULA_NAME} ${TAG}" ]] || fail "unexpected version output from Homebrew install: ${version_output}"
 brew test "$TAP_NAME/$FORMULA_NAME"
 
 if [[ "$WAS_INSTALLED" -eq 0 ]]; then

@@ -53,6 +53,11 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return 1
 	}
 
+	if cfg.Command == commandVersion {
+		fmt.Fprintln(stdout, versionLine())
+		return 0
+	}
+
 	if runtime.GOOS != "darwin" {
 		fmt.Fprintln(stderr, "xcodecli: only macOS (darwin) is supported")
 		return 1

@@ -14,6 +14,7 @@ import (
 type commandName string
 
 const (
+	commandVersion        commandName = "version"
 	commandBridge         commandName = "bridge"
 	commandDoctor         commandName = "doctor"
 	commandToolsList      commandName = "tools-list"
@@ -50,6 +51,8 @@ func parseCLI(args []string) (cliConfig, string, error) {
 	}
 
 	switch args[0] {
+	case "version", "--version":
+		return cliConfig{Command: commandVersion}, versionUsage(), nil
 	case "help", "-h", "--help":
 		return parseHelp(args[1:])
 	case string(commandBridge):
@@ -81,6 +84,8 @@ func parseHelp(args []string) (cliConfig, string, error) {
 		return cliConfig{}, rootUsage(), errUsageRequested
 	}
 	switch args[0] {
+	case string(commandVersion):
+		return cliConfig{Command: commandVersion}, versionUsage(), errUsageRequested
 	case string(commandBridge):
 		return cliConfig{}, bridgeUsage(), errUsageRequested
 	case string(commandDoctor):
@@ -552,6 +557,8 @@ RUNTIME MODEL:
   - Xcode should be running, with at least one workspace/project window open.
 
 USAGE:
+  xcodecli version
+  xcodecli --version
   xcodecli [--xcode-pid PID] [--session-id UUID] [--debug]
   xcodecli bridge [--xcode-pid PID] [--session-id UUID] [--debug]
   xcodecli doctor [--json] [--xcode-pid PID] [--session-id UUID]
@@ -565,6 +572,7 @@ USAGE:
   xcodecli agent uninstall
 
 COMMANDS:
+  version   Print the current xcodecli version
   bridge    Run raw STDIO passthrough to xcrun mcpbridge
   doctor    Run environment diagnostics
   tools     Convenience commands for listing tools
@@ -572,6 +580,16 @@ COMMANDS:
   agent     Inspect or manage the LaunchAgent used by tools commands
 
 Use "xcodecli help <command>" for command-specific help.
+`
+}
+
+func versionUsage() string {
+	return `version prints the current xcodecli version string.
+Use this in bug reports, release verification, or install checks.
+
+USAGE:
+  xcodecli version
+  xcodecli --version
 `
 }
 

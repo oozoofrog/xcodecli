@@ -33,6 +33,29 @@ func TestParseCLIDefaultBridge(t *testing.T) {
 	}
 }
 
+func TestParseCLIVersionCommand(t *testing.T) {
+	cfg, usage, err := parseCLI([]string{"version"})
+	if err != nil {
+		t.Fatalf("parseCLI returned error: %v", err)
+	}
+	if cfg.Command != commandVersion {
+		t.Fatalf("command = %q, want %q", cfg.Command, commandVersion)
+	}
+	if !strings.Contains(usage, "xcodecli version") {
+		t.Fatalf("usage missing version help: %q", usage)
+	}
+}
+
+func TestParseCLIVersionFlag(t *testing.T) {
+	cfg, _, err := parseCLI([]string{"--version"})
+	if err != nil {
+		t.Fatalf("parseCLI returned error: %v", err)
+	}
+	if cfg.Command != commandVersion {
+		t.Fatalf("command = %q, want %q", cfg.Command, commandVersion)
+	}
+}
+
 func TestParseCLIWithoutArgsShowsHelp(t *testing.T) {
 	_, usage, err := parseCLI(nil)
 	if err != errUsageRequested {
@@ -131,9 +154,18 @@ func TestParseCLIHelp(t *testing.T) {
 
 func TestRootUsageIncludesHumanAndAgentGuidance(t *testing.T) {
 	usage := rootUsage()
-	for _, want := range []string{"START HERE:", "For humans:", "For agents:", "xcodecli agent guide", "xcodecli agent demo", "xcodecli doctor --json", "xcodecli tool inspect <name> --json"} {
+	for _, want := range []string{"START HERE:", "For humans:", "For agents:", "xcodecli version", "xcodecli agent guide", "xcodecli agent demo", "xcodecli doctor --json", "xcodecli tool inspect <name> --json"} {
 		if !strings.Contains(usage, want) {
 			t.Fatalf("root usage missing %q: %s", want, usage)
+		}
+	}
+}
+
+func TestVersionUsageMentionsVersionFlag(t *testing.T) {
+	usage := versionUsage()
+	for _, want := range []string{"xcodecli version", "xcodecli --version"} {
+		if !strings.Contains(usage, want) {
+			t.Fatalf("version usage missing %q: %s", want, usage)
 		}
 	}
 }
@@ -164,6 +196,45 @@ func TestRunRejectsInvalidBridgeOptions(t *testing.T) {
 	if !strings.Contains(stderr.String(), "invalid bridge options") {
 		t.Fatalf("stderr = %q, want invalid options message", stderr.String())
 	}
+}
+
+func TestRunVersionCommand(t *testing.T) {
+	withVersion(t, "v9.9.9", func() {
+		var stdout strings.Builder
+		var stderr strings.Builder
+		code := run(context.Background(), []string{"version"}, strings.NewReader(""), &stdout, &stderr, os.Environ())
+		if code != 0 {
+			t.Fatalf("exit code = %d, want 0", code)
+		}
+		if strings.TrimSpace(stdout.String()) != "xcodecli v9.9.9" {
+			t.Fatalf("stdout = %q, want version line", stdout.String())
+		}
+		if stderr.String() != "" {
+			t.Fatalf("stderr = %q, want empty stderr", stderr.String())
+		}
+	})
+}
+
+func TestRunVersionFlag(t *testing.T) {
+	withVersion(t, "v1.2.3", func() {
+		var stdout strings.Builder
+		var stderr strings.Builder
+		code := run(context.Background(), []string{"--version"}, strings.NewReader(""), &stdout, &stderr, os.Environ())
+		if code != 0 {
+			t.Fatalf("exit code = %d, want 0", code)
+		}
+		if strings.TrimSpace(stdout.String()) != "xcodecli v1.2.3" {
+			t.Fatalf("stdout = %q, want version line", stdout.String())
+		}
+	})
+}
+
+func TestCurrentVersionFallsBackToDev(t *testing.T) {
+	withVersion(t, "", func() {
+		if got := currentVersion(); got != "dev" {
+			t.Fatalf("currentVersion() = %q, want dev", got)
+		}
+	})
 }
 
 func TestRunDoctorJSON(t *testing.T) {
@@ -604,5 +675,13 @@ func withStubs(t *testing.T, fn func()) {
 		defaultAgentRunFunc = oldRun
 		defaultDoctorRunFunc = oldDoctor
 	}()
+	fn()
+}
+
+func withVersion(t *testing.T, version string, fn func()) {
+	t.Helper()
+	old := cliVersion
+	cliVersion = version
+	defer func() { cliVersion = old }()
 	fn()
 }
