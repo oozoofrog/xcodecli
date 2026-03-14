@@ -6,6 +6,11 @@ The format is inspired by [Keep a Changelog](https://keepachangelog.com/en/1.1.0
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-03-15
+### Changed
+- `xcodecli` and `xcodecli help` now show the current version at the top of their output.
+- Development builds now render the version as `<version> (dev)`, while release builds continue to show the plain tagged version.
+
 ## [0.3.1] - 2026-03-15
 ### Added
 - `xcodecli version` and `xcodecli --version` for printing the current CLI version.
