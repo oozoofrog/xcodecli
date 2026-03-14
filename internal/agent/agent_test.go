@@ -84,6 +84,50 @@ func TestLaunchAgentStopsAfterIdleTimeout(t *testing.T) {
 	}
 }
 
+func TestListToolsAutostartHonorsCallerTimeout(t *testing.T) {
+	_, paths := newShortPaths(t)
+	clientCfg := Config{
+		Paths:          paths,
+		Label:          LaunchAgentLabel,
+		IdleTimeout:    5 * time.Second,
+		ErrOut:         io.Discard,
+		Launchd:        blockingLaunchd{},
+		ExecutablePath: func() (string, error) { return "/tmp/xcodemcp-test", nil },
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	_, err := ListTools(ctx, clientCfg, Request{Timeout: 5 * time.Second})
+	if err == nil || !strings.Contains(err.Error(), "context deadline exceeded") {
+		t.Fatalf("expected caller timeout error, got %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("autostart timeout took too long: %s", elapsed)
+	}
+}
+
+func TestListToolsBackendInitializationHonorsRequestTimeout(t *testing.T) {
+	tempDir, paths := newShortPaths(t)
+	spawnFile := filepath.Join(tempDir, "spawn.log")
+	serverCfg := testServerConfig(t, paths, spawnFile, 5*time.Second)
+	serverCfg.Command = helperCommand("timeout-init")
+	harness := newServerHarness(t, serverCfg)
+	launchd := &fakeLaunchd{harness: harness}
+	clientCfg := testClientConfig(paths, spawnFile, 5*time.Second, launchd)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	started := time.Now()
+	_, err := ListTools(ctx, clientCfg, Request{Timeout: 200 * time.Millisecond})
+	if err == nil || (!strings.Contains(err.Error(), "timed out") && !strings.Contains(err.Error(), "context deadline exceeded")) {
+		t.Fatalf("expected backend initialization timeout, got %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("backend initialization timeout took too long: %s", elapsed)
+	}
+}
+
 func TestUninstallRemovesLaunchAgentArtifacts(t *testing.T) {
 	tempDir, paths := newShortPaths(t)
 	spawnFile := filepath.Join(tempDir, "spawn.log")
@@ -163,6 +207,26 @@ type fakeLaunchd struct {
 	mu           sync.Mutex
 	bootstrapped bool
 	harness      *serverHarness
+}
+
+type blockingLaunchd struct{}
+
+func (blockingLaunchd) Print(ctx context.Context, target string) (string, error) {
+	return "", fmt.Errorf("service %s not loaded", target)
+}
+
+func (blockingLaunchd) Bootstrap(ctx context.Context, domainTarget, plistPath string) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func (blockingLaunchd) Kickstart(ctx context.Context, serviceTarget string) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func (blockingLaunchd) Bootout(ctx context.Context, target string) error {
+	return nil
 }
 
 func (f *fakeLaunchd) Print(ctx context.Context, target string) (string, error) {
@@ -268,6 +332,21 @@ func helperCommand(mode string) mcp.Command {
 	return mcp.Command{Path: os.Args[0], Args: []string{"-test.run=TestAgentHelperProcess", "--", mode}}
 }
 
+func helperMode(t *testing.T) string {
+	t.Helper()
+	idx := -1
+	for i, arg := range os.Args {
+		if arg == "--" {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 || idx+1 >= len(os.Args) {
+		t.Fatal("missing helper mode")
+	}
+	return os.Args[idx+1]
+}
+
 func helperSpawnCount(t *testing.T, path string) int {
 	t.Helper()
 	data, err := os.ReadFile(path)
@@ -311,7 +390,13 @@ func TestAgentHelperProcess(t *testing.T) {
 		id := req["id"]
 		switch method {
 		case "initialize":
-			writeHelperResponse(t, map[string]any{"jsonrpc": "2.0", "id": id, "result": map[string]any{"protocolVersion": "2025-06-18"}})
+			switch helperMode(t) {
+			case "timeout-init":
+				time.Sleep(2 * time.Second)
+				continue
+			default:
+				writeHelperResponse(t, map[string]any{"jsonrpc": "2.0", "id": id, "result": map[string]any{"protocolVersion": "2025-06-18"}})
+			}
 		case "notifications/initialized":
 			continue
 		case "tools/list":
