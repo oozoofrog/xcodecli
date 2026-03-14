@@ -168,6 +168,9 @@ func TestRunRejectsInvalidBridgeOptions(t *testing.T) {
 
 func TestRunDoctorJSON(t *testing.T) {
 	withStubs(t, func() {
+		defaultDoctorRunFunc = func(ctx context.Context, opts doctor.Options) doctor.Report {
+			return doctor.Report{Checks: []doctor.Check{{Name: "stub", Status: doctor.StatusOK, Detail: "ok"}}}
+		}
 		defaultAgentStatusFunc = func(ctx context.Context, cfg agent.Config) (agent.Status, error) {
 			return agent.Status{Label: agent.LaunchAgentLabel}, nil
 		}
@@ -575,6 +578,7 @@ func withStubs(t *testing.T, fn func()) {
 	oldStop := defaultAgentStopFunc
 	oldUninstall := defaultAgentUninstallFunc
 	oldRun := defaultAgentRunFunc
+	oldDoctor := defaultDoctorRunFunc
 	defaultAgentConfigFunc = func(command mcp.Command, env []string, errOut io.Writer) (agent.Config, error) {
 		return agent.Config{}, nil
 	}
@@ -598,6 +602,7 @@ func withStubs(t *testing.T, fn func()) {
 		defaultAgentStopFunc = oldStop
 		defaultAgentUninstallFunc = oldUninstall
 		defaultAgentRunFunc = oldRun
+		defaultDoctorRunFunc = oldDoctor
 	}()
 	fn()
 }
