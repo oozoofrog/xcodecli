@@ -339,6 +339,56 @@ func TestRunToolsListReusesPersistentSessionID(t *testing.T) {
 	})
 }
 
+func TestRunToolsListUsesRequestTimeoutContext(t *testing.T) {
+	withStubs(t, func() {
+		defaultToolsListFunc = func(ctx context.Context, cfg agent.Config, req agent.Request) ([]map[string]any, error) {
+			deadline, ok := ctx.Deadline()
+			if !ok {
+				t.Fatal("tools list context did not include a deadline")
+			}
+			if remaining := time.Until(deadline); remaining <= 0 || remaining > time.Second {
+				t.Fatalf("unexpected tools list deadline window: %s", remaining)
+			}
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}
+
+		var stdout strings.Builder
+		var stderr strings.Builder
+		code := run(context.Background(), []string{"tools", "list", "--json", "--timeout", "50ms"}, strings.NewReader(""), &stdout, &stderr, os.Environ())
+		if code != 1 {
+			t.Fatalf("exit code = %d, want 1", code)
+		}
+		if !strings.Contains(stderr.String(), "context deadline exceeded") {
+			t.Fatalf("stderr = %q, want timeout error", stderr.String())
+		}
+	})
+}
+
+func TestRunToolInspectUsesTimeoutContext(t *testing.T) {
+	withStubs(t, func() {
+		parentCtx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		defer cancel()
+		defaultToolsListFunc = func(ctx context.Context, cfg agent.Config, req agent.Request) ([]map[string]any, error) {
+			if _, ok := ctx.Deadline(); !ok {
+				t.Fatal("tool inspect context did not include a deadline")
+			}
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}
+
+		var stdout strings.Builder
+		var stderr strings.Builder
+		code := run(parentCtx, []string{"tool", "inspect", "BuildProject"}, strings.NewReader(""), &stdout, &stderr, os.Environ())
+		if code != 1 {
+			t.Fatalf("exit code = %d, want 1", code)
+		}
+		if !strings.Contains(stderr.String(), "context deadline exceeded") {
+			t.Fatalf("stderr = %q, want timeout error", stderr.String())
+		}
+	})
+}
+
 func TestRunToolCallIsErrorExitsOne(t *testing.T) {
 	withStubs(t, func() {
 		defaultToolCallFunc = func(ctx context.Context, cfg agent.Config, req agent.Request, toolName string, arguments map[string]any) (mcp.CallResult, error) {
@@ -396,6 +446,32 @@ func TestRunToolCallFromStdin(t *testing.T) {
 		code := run(context.Background(), []string{"tool", "call", "build_sim", "--json-stdin"}, strings.NewReader(`{"scheme":"Demo"}`), &stdout, &stderr, os.Environ())
 		if code != 0 {
 			t.Fatalf("exit code = %d, want 0 (stderr=%q)", code, stderr.String())
+		}
+	})
+}
+
+func TestRunToolCallUsesRequestTimeoutContext(t *testing.T) {
+	withStubs(t, func() {
+		defaultToolCallFunc = func(ctx context.Context, cfg agent.Config, req agent.Request, toolName string, arguments map[string]any) (mcp.CallResult, error) {
+			deadline, ok := ctx.Deadline()
+			if !ok {
+				t.Fatal("tool call context did not include a deadline")
+			}
+			if remaining := time.Until(deadline); remaining <= 0 || remaining > time.Second {
+				t.Fatalf("unexpected tool call deadline window: %s", remaining)
+			}
+			<-ctx.Done()
+			return mcp.CallResult{}, ctx.Err()
+		}
+
+		var stdout strings.Builder
+		var stderr strings.Builder
+		code := run(context.Background(), []string{"tool", "call", "build_sim", "--json", `{"scheme":"Demo"}`, "--timeout", "50ms"}, strings.NewReader(""), &stdout, &stderr, os.Environ())
+		if code != 1 {
+			t.Fatalf("exit code = %d, want 1", code)
+		}
+		if !strings.Contains(stderr.String(), "context deadline exceeded") {
+			t.Fatalf("stderr = %q, want timeout error", stderr.String())
 		}
 	})
 }
@@ -459,6 +535,33 @@ func TestRunAgentStatusJSON(t *testing.T) {
 		}
 		if status.Label != agent.LaunchAgentLabel || !status.Running {
 			t.Fatalf("unexpected status: %+v", status)
+		}
+	})
+}
+
+func TestRunAgentCommandsDoNotCreatePersistentSession(t *testing.T) {
+	withStubs(t, func() {
+		oldSessionPathFunc := defaultSessionPathFunc
+		sessionPath := filepath.Join(t.TempDir(), "session-id")
+		defaultSessionPathFunc = func() (string, error) { return sessionPath, nil }
+		defer func() { defaultSessionPathFunc = oldSessionPathFunc }()
+
+		cases := [][]string{
+			{"agent", "status"},
+			{"agent", "status", "--json"},
+			{"agent", "stop"},
+			{"agent", "uninstall"},
+			{"agent", "run", "--launch-agent"},
+		}
+		for _, args := range cases {
+			var stdout strings.Builder
+			var stderr strings.Builder
+			if code := run(context.Background(), args, strings.NewReader(""), &stdout, &stderr, os.Environ()); code != 0 {
+				t.Fatalf("run(%v) exit code = %d, stderr=%q", args, code, stderr.String())
+			}
+			if _, err := os.Stat(sessionPath); !os.IsNotExist(err) {
+				t.Fatalf("run(%v) created persistent session file: %v", args, err)
+			}
 		}
 	})
 }

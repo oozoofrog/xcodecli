@@ -13,9 +13,12 @@ type Client struct {
 	closeErr  error
 }
 
-func NewClient(cfg Config) (*Client, error) {
+func NewClient(initCtx context.Context, cfg Config) (*Client, error) {
+	if initCtx == nil {
+		initCtx = context.Background()
+	}
 	baseCtx, cancel := context.WithCancel(context.Background())
-	s, err := startSession(baseCtx, cfg)
+	s, err := startSession(baseCtx, initCtx, cfg)
 	if err != nil {
 		cancel()
 		return nil, err
@@ -69,6 +72,14 @@ func (c *Client) Close() error {
 	c.closeOnce.Do(func() {
 		c.cancel()
 		c.closeErr = c.session.close()
+	})
+	return c.closeErr
+}
+
+func (c *Client) Abort() error {
+	c.closeOnce.Do(func() {
+		c.cancel()
+		c.closeErr = c.session.abort()
 	})
 	return c.closeErr
 }

@@ -157,7 +157,7 @@ func (s *server) listTools(req rpcRequest) ([]map[string]any, error) {
 	pooled.mu.Lock()
 	defer pooled.mu.Unlock()
 
-	client, err := s.ensureClient(pooled, req)
+	client, err := s.ensureClient(ctx, pooled, req)
 	if err != nil {
 		return nil, err
 	}
@@ -195,7 +195,7 @@ func (s *server) callTool(req rpcRequest) (mcp.CallResult, error) {
 	pooled.mu.Lock()
 	defer pooled.mu.Unlock()
 
-	client, err := s.ensureClient(pooled, req)
+	client, err := s.ensureClient(ctx, pooled, req)
 	if err != nil {
 		return mcp.CallResult{}, err
 	}
@@ -233,7 +233,7 @@ func (s *server) getSession(key sessionKey) (*pooledSession, error) {
 	return pooled, nil
 }
 
-func (s *server) ensureClient(pooled *pooledSession, req rpcRequest) (*mcp.Client, error) {
+func (s *server) ensureClient(ctx context.Context, pooled *pooledSession, req rpcRequest) (*mcp.Client, error) {
 	if pooled.client != nil {
 		return pooled.client, nil
 	}
@@ -241,7 +241,7 @@ func (s *server) ensureClient(pooled *pooledSession, req rpcRequest) (*mcp.Clien
 	if req.DeveloperDir != "" {
 		env = setEnvValue(env, "DEVELOPER_DIR", req.DeveloperDir)
 	}
-	client, err := mcp.NewClient(mcp.Config{
+	client, err := mcp.NewClient(ctx, mcp.Config{
 		Command: s.cfg.Command,
 		Env:     env,
 		Debug:   false,
@@ -256,7 +256,7 @@ func (s *server) ensureClient(pooled *pooledSession, req rpcRequest) (*mcp.Clien
 
 func (s *server) discardClient(pooled *pooledSession) {
 	if pooled.client != nil {
-		_ = pooled.client.Close()
+		_ = pooled.client.Abort()
 		pooled.client = nil
 	}
 }

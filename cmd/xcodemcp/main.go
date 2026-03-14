@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/oozoofrog/xcodemcp-cli/internal/agent"
 	"github.com/oozoofrog/xcodemcp-cli/internal/bridge"
@@ -54,25 +55,6 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return 1
 	}
 
-	sessionPath, err := defaultSessionPathFunc()
-	if err != nil {
-		fmt.Fprintf(stderr, "xcodemcp: %v\n", err)
-		return 1
-	}
-
-	resolved, err := bridge.ResolveOptions(env, bridge.EnvOptions{
-		XcodePID:  cfg.XcodePID,
-		SessionID: cfg.SessionID,
-	}, sessionPath)
-	if err != nil {
-		fmt.Fprintf(stderr, "xcodemcp: %v\n", err)
-		return 1
-	}
-	effective := resolved.EnvOptions
-	if cfg.Debug {
-		logResolvedSession(stderr, resolved)
-	}
-
 	agentCfg, err := defaultAgentConfigFunc(defaultMCPCommand, env, stderr)
 	if err != nil {
 		fmt.Fprintf(stderr, "xcodemcp: %v\n", err)
@@ -84,11 +66,16 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 
 	switch cfg.Command {
 	case commandDoctor:
+		resolved, err := resolveEffectiveOptions(env, cfg)
+		if err != nil {
+			fmt.Fprintf(stderr, "xcodemcp: %v\n", err)
+			return 1
+		}
 		agentStatus, agentStatusErr := defaultAgentStatusFunc(ctx, agentCfg)
 		report := doctor.NewInspector().Run(ctx, doctor.Options{
 			BaseEnv:        env,
-			XcodePID:       effective.XcodePID,
-			SessionID:      effective.SessionID,
+			XcodePID:       resolved.XcodePID,
+			SessionID:      resolved.SessionID,
 			SessionSource:  resolved.SessionSource,
 			SessionPath:    resolved.SessionPath,
 			AgentStatus:    &agentStatus,
@@ -107,6 +94,15 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		}
 		return 1
 	case commandBridge:
+		resolved, err := resolveEffectiveOptions(env, cfg)
+		if err != nil {
+			fmt.Fprintf(stderr, "xcodemcp: %v\n", err)
+			return 1
+		}
+		if cfg.Debug {
+			logResolvedSession(stderr, resolved)
+		}
+		effective := resolved.EnvOptions
 		if err := bridge.ValidateEnvOptions(effective); err != nil {
 			fmt.Fprintf(stderr, "xcodemcp: invalid bridge options: %v\n", err)
 			return 1
@@ -126,12 +122,23 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		}
 		return result.ExitCode
 	case commandToolsList:
+		resolved, err := resolveEffectiveOptions(env, cfg)
+		if err != nil {
+			fmt.Fprintf(stderr, "xcodemcp: %v\n", err)
+			return 1
+		}
+		if cfg.Debug {
+			logResolvedSession(stderr, resolved)
+		}
+		effective := resolved.EnvOptions
 		if err := bridge.ValidateEnvOptions(effective); err != nil {
 			fmt.Fprintf(stderr, "xcodemcp: invalid MCP options: %v\n", err)
 			return 1
 		}
+		requestCtx, cancel := requestTimeoutContext(ctx, cfg.Timeout)
+		defer cancel()
 		request := agentRequest(env, effective, cfg)
-		tools, err := defaultToolsListFunc(ctx, agentCfg, request)
+		tools, err := defaultToolsListFunc(requestCtx, agentCfg, request)
 		if err != nil {
 			fmt.Fprintf(stderr, "xcodemcp: %v\n", err)
 			return 1
@@ -154,12 +161,23 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		}
 		return 0
 	case commandToolInspect:
+		resolved, err := resolveEffectiveOptions(env, cfg)
+		if err != nil {
+			fmt.Fprintf(stderr, "xcodemcp: %v\n", err)
+			return 1
+		}
+		if cfg.Debug {
+			logResolvedSession(stderr, resolved)
+		}
+		effective := resolved.EnvOptions
 		if err := bridge.ValidateEnvOptions(effective); err != nil {
 			fmt.Fprintf(stderr, "xcodemcp: invalid MCP options: %v\n", err)
 			return 1
 		}
+		requestCtx, cancel := requestTimeoutContext(ctx, cfg.Timeout)
+		defer cancel()
 		request := agentRequest(env, effective, cfg)
-		tools, err := defaultToolsListFunc(ctx, agentCfg, request)
+		tools, err := defaultToolsListFunc(requestCtx, agentCfg, request)
 		if err != nil {
 			fmt.Fprintf(stderr, "xcodemcp: %v\n", err)
 			return 1
@@ -182,6 +200,15 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		}
 		return 0
 	case commandToolCall:
+		resolved, err := resolveEffectiveOptions(env, cfg)
+		if err != nil {
+			fmt.Fprintf(stderr, "xcodemcp: %v\n", err)
+			return 1
+		}
+		if cfg.Debug {
+			logResolvedSession(stderr, resolved)
+		}
+		effective := resolved.EnvOptions
 		if err := bridge.ValidateEnvOptions(effective); err != nil {
 			fmt.Fprintf(stderr, "xcodemcp: invalid MCP options: %v\n", err)
 			return 1
@@ -191,8 +218,10 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 			fmt.Fprintf(stderr, "xcodemcp: %v\n", err)
 			return 1
 		}
+		requestCtx, cancel := requestTimeoutContext(ctx, cfg.Timeout)
+		defer cancel()
 		request := agentRequest(env, effective, cfg)
-		result, err := defaultToolCallFunc(ctx, agentCfg, request, cfg.ToolName, arguments)
+		result, err := defaultToolCallFunc(requestCtx, agentCfg, request, cfg.ToolName, arguments)
 		if err != nil {
 			fmt.Fprintf(stderr, "xcodemcp: %v\n", err)
 			return 1
@@ -248,8 +277,26 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	}
 }
 
+func resolveEffectiveOptions(env []string, cfg cliConfig) (bridge.ResolvedOptions, error) {
+	sessionPath, err := defaultSessionPathFunc()
+	if err != nil {
+		return bridge.ResolvedOptions{}, err
+	}
+	return bridge.ResolveOptions(env, bridge.EnvOptions{
+		XcodePID:  cfg.XcodePID,
+		SessionID: cfg.SessionID,
+	}, sessionPath)
+}
+
 func agentRequest(env []string, effective bridge.EnvOptions, cfg cliConfig) agent.Request {
 	return agent.BuildRequest(env, effective, cfg.Timeout, cfg.Debug)
+}
+
+func requestTimeoutContext(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout > 0 {
+		return context.WithTimeout(parent, timeout)
+	}
+	return context.WithCancel(parent)
 }
 
 func findToolByName(tools []map[string]any, name string) (map[string]any, bool) {

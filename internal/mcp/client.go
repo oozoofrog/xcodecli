@@ -75,7 +75,7 @@ type toolsListResult struct {
 }
 
 func ListTools(ctx context.Context, cfg Config) ([]map[string]any, error) {
-	client, err := NewClient(cfg)
+	client, err := NewClient(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -95,13 +95,13 @@ func ListTools(ctx context.Context, cfg Config) ([]map[string]any, error) {
 	case res := <-resultCh:
 		return res.tools, res.err
 	case <-ctx.Done():
-		_ = client.Close()
+		_ = client.Abort()
 		return nil, ctx.Err()
 	}
 }
 
 func CallTool(ctx context.Context, cfg Config, name string, arguments map[string]any) (CallResult, error) {
-	client, err := NewClient(cfg)
+	client, err := NewClient(ctx, cfg)
 	if err != nil {
 		return CallResult{}, err
 	}
@@ -121,14 +121,20 @@ func CallTool(ctx context.Context, cfg Config, name string, arguments map[string
 	case res := <-resultCh:
 		return res.callResult, res.err
 	case <-ctx.Done():
-		_ = client.Close()
+		_ = client.Abort()
 		return CallResult{}, ctx.Err()
 	}
 }
 
-func startSession(ctx context.Context, cfg Config) (*session, error) {
+func startSession(lifetimeCtx, initCtx context.Context, cfg Config) (*session, error) {
 	if cfg.Command.Path == "" {
 		return nil, errors.New("missing command path")
+	}
+	if lifetimeCtx == nil {
+		lifetimeCtx = context.Background()
+	}
+	if initCtx == nil {
+		initCtx = context.Background()
 	}
 
 	path, err := exec.LookPath(cfg.Command.Path)
@@ -141,7 +147,7 @@ func startSession(ctx context.Context, cfg Config) (*session, error) {
 		errOut = io.Discard
 	}
 
-	cmd := exec.CommandContext(ctx, path, cfg.Command.Args...)
+	cmd := exec.CommandContext(lifetimeCtx, path, cfg.Command.Args...)
 	cmd.Env = cfg.Env
 
 	stdin, err := cmd.StdinPipe()
@@ -177,9 +183,21 @@ func startSession(ctx context.Context, cfg Config) (*session, error) {
 	}
 	go s.captureStderr(stderrPipe)
 
-	if err := s.initialize(); err != nil {
-		_ = s.close()
-		return nil, err
+	initErrCh := make(chan error, 1)
+	go func() {
+		initErrCh <- s.initialize()
+	}()
+
+	select {
+	case err := <-initErrCh:
+		if err != nil {
+			_ = s.abort()
+			return nil, err
+		}
+	case <-initCtx.Done():
+		_ = s.abort()
+		<-initErrCh
+		return nil, initCtx.Err()
 	}
 
 	return s, nil
@@ -350,9 +368,21 @@ func (s *session) captureStderr(r io.Reader) {
 }
 
 func (s *session) close() error {
+	return s.terminate(false)
+}
+
+func (s *session) abort() error {
+	return s.terminate(true)
+}
+
+func (s *session) terminate(force bool) error {
 	if s.stdin != nil {
 		_ = s.stdin.Close()
 		s.stdin = nil
+	}
+
+	if force && s.cmd.Process != nil {
+		_ = s.cmd.Process.Kill()
 	}
 
 	waitCh := make(chan error, 1)
@@ -370,6 +400,9 @@ func (s *session) close() error {
 		waitErr = <-waitCh
 	}
 	<-s.stderrDoneCh
+	if force {
+		return nil
+	}
 	if waitErr == nil {
 		return nil
 	}

@@ -83,6 +83,7 @@ func TestListToolsFailsOnServerRequest(t *testing.T) {
 func TestListToolsTimesOut(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
+	started := time.Now()
 
 	_, err := ListTools(ctx, Config{
 		Command: helperCommand("timeout"),
@@ -90,6 +91,26 @@ func TestListToolsTimesOut(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "context deadline exceeded") {
 		t.Fatalf("expected timeout-related error, got %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("ListTools timeout took too long: %s", elapsed)
+	}
+}
+
+func TestListToolsInitializeTimeoutHonorsContext(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+
+	_, err := ListTools(ctx, Config{
+		Command: helperCommand("timeout-init"),
+		Env:     helperEnv(),
+	})
+	if err == nil || !strings.Contains(err.Error(), "context deadline exceeded") {
+		t.Fatalf("expected timeout-related error, got %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("initialize timeout took too long: %s", elapsed)
 	}
 }
 
@@ -176,6 +197,8 @@ func TestHelperProcess(t *testing.T) {
 		server.expectInitialize("2025-06-18")
 		server.expectInitialized()
 		server.expectToolsList(2, "")
+		time.Sleep(2 * time.Second)
+	case "timeout-init":
 		time.Sleep(2 * time.Second)
 	case "bad-json":
 		server.expectInitialize("2025-06-18")
