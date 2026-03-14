@@ -73,6 +73,7 @@ You can also override the package or output path:
 ```bash
 OUTPUT=.tmp/xcodecli ./scripts/build.sh
 PACKAGE=./cmd/xcodecli ./scripts/build.sh
+VERSION=v0.3.1 ./scripts/build.sh
 ```
 
 ## Usage
@@ -81,6 +82,7 @@ Running `xcodecli` with no arguments prints help. Use `bridge` for raw passthrou
 
 ```bash
 ./xcodecli
+./xcodecli version
 ./xcodecli --xcode-pid 12345
 ./xcodecli bridge --session-id 11111111-1111-1111-1111-111111111111
 ```
