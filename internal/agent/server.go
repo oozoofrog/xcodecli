@@ -206,6 +206,9 @@ func (s *server) listTools(parentCtx context.Context, req rpcRequest) ([]map[str
 	case res := <-resultCh:
 		if res.err != nil {
 			s.discardClientLocked(pooled)
+			if ctx.Err() != nil {
+				return nil, requestTimeoutError(req.TimeoutMS, requestTimeoutAction(req.Method, req.ToolName), ctx.Err())
+			}
 			return nil, res.err
 		}
 		return res.tools, nil
@@ -244,6 +247,9 @@ func (s *server) callTool(parentCtx context.Context, req rpcRequest) (mcp.CallRe
 	case res := <-resultCh:
 		if res.err != nil {
 			s.discardClientLocked(pooled)
+			if ctx.Err() != nil {
+				return mcp.CallResult{}, requestTimeoutError(req.TimeoutMS, requestTimeoutAction(req.Method, req.ToolName), ctx.Err())
+			}
 			return mcp.CallResult{}, res.err
 		}
 		return res.callResult, nil

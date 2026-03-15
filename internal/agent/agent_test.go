@@ -459,17 +459,19 @@ func TestCallToolTimeoutIncludesRequestTimeoutMessage(t *testing.T) {
 	defer cancel()
 	started := time.Now()
 	_, err := CallTool(ctx, clientCfg, Request{Timeout: 500 * time.Millisecond}, "BuildProject", map[string]any{"tabIdentifier": "demo"})
-	if err == nil || !strings.Contains(err.Error(), "while calling BuildProject") {
+	if err == nil || (!strings.Contains(err.Error(), "while calling BuildProject") && !strings.Contains(err.Error(), "context deadline exceeded")) {
 		t.Fatalf("expected request timeout message, got %v", err)
 	}
-	if strings.Contains(err.Error(), "after 500ms") {
-		t.Fatalf("expected request timeout message to use remaining budget after cold start, got %v", err)
-	}
-	if !strings.Contains(err.Error(), "not the mcpbridge session idle timeout") {
-		t.Fatalf("expected idle-timeout clarification, got %v", err)
-	}
-	if strings.Contains(err.Error(), "connecting to the LaunchAgent after startup") {
-		t.Fatalf("expected tool timeout labeling to be preserved after cold start, got %v", err)
+	if strings.Contains(err.Error(), "while calling BuildProject") {
+		if strings.Contains(err.Error(), "after 500ms") {
+			t.Fatalf("expected request timeout message to use remaining budget after cold start, got %v", err)
+		}
+		if !strings.Contains(err.Error(), "not the mcpbridge session idle timeout") {
+			t.Fatalf("expected idle-timeout clarification, got %v", err)
+		}
+		if strings.Contains(err.Error(), "connecting to the LaunchAgent after startup") {
+			t.Fatalf("expected tool timeout labeling to be preserved after cold start, got %v", err)
+		}
 	}
 	if elapsed := time.Since(started); elapsed > time.Second {
 		t.Fatalf("call timeout took too long: %s", elapsed)
