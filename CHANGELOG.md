@@ -6,6 +6,19 @@ The format is inspired by [Keep a Changelog](https://keepachangelog.com/en/1.1.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-03-15
+### Added
+- Hierarchical collaboration context docs (`CLAUDE.md` plus local `CONTEXT.md` files) for the CLI surface, internal packages, docs, and scripts.
+
+### Changed
+- Tool request timeout defaults are now grouped more explicitly by tool category, including `DocumentationSearch` in the 60-second read/search bucket.
+- Agent and quickstart guidance now more clearly distinguish request timeouts from `mcpbridge` session idle timeout behavior.
+
+### Fixed
+- LaunchAgent-backed tool requests now retire stale `mcpbridge` sessions during handoff without blocking the next request.
+- Same-path rebuilds now detect stale LaunchAgent binaries and restart the daemon before serving new tool requests.
+- Cold-start and startup timeout errors now report the remaining request budget instead of the original configured timeout.
+
 ## [0.4.0] - 2026-03-15
 ### Added
 - `xcodecli mcp config` for generating or writing MCP registration commands for Claude Code, Codex, and Gemini using `xcodecli bridge`.
