@@ -620,6 +620,27 @@ func TestTimeoutBudgetMillisUsesRemainingDeadline(t *testing.T) {
 	}
 }
 
+func TestSessionKeyAndErrorHelpers(t *testing.T) {
+	req := rpcRequest{XcodePID: "123", SessionID: "abc", DeveloperDir: "/Applications/Xcode.app/Contents/Developer"}
+	key := sessionKeyForRequest(req)
+	if key.XcodePID != "123" || key.SessionID != "abc" || key.DeveloperDir != "/Applications/Xcode.app/Contents/Developer" {
+		t.Fatalf("unexpected sessionKey: %+v", key)
+	}
+
+	baseErr := errors.New("socket missing")
+	unavailable := unavailableError{stage: "connect", err: baseErr}
+	if unavailable.Error() != "socket missing" {
+		t.Fatalf("Error() = %q, want socket missing", unavailable.Error())
+	}
+	if !errors.Is(unavailable, baseErr) {
+		t.Fatal("Unwrap should expose underlying error")
+	}
+
+	if got, err := resolvedExecutablePath(); err != nil || got == "" {
+		t.Fatalf("resolvedExecutablePath() = %q, err=%v; want non-empty path", got, err)
+	}
+}
+
 func TestHandleConnCancelsInFlightRequestOnDisconnect(t *testing.T) {
 	oldFactory := newSessionClient
 	t.Cleanup(func() { newSessionClient = oldFactory })
