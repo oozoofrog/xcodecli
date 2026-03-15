@@ -6,11 +6,16 @@ The format is inspired by [Keep a Changelog](https://keepachangelog.com/en/1.1.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-03-16
 ### Added
 - `xcodecli serve`, a stdio MCP server mode that lets MCP clients talk to `xcodecli` directly while reusing the LaunchAgent-backed pooled `mcpbridge` runtime.
 
 ### Changed
 - `xcodecli mcp config` and the `mcp <client>` aliases now target `xcodecli serve` by default, with `--mode bridge` available for raw passthrough compatibility.
+
+### Fixed
+- `serve` now negotiates supported MCP protocol versions instead of always forcing the newest version.
+- `serve` and the agent runtime now propagate request cancellation more cleanly so cancelled long-running MCP calls stop without leaking stale work.
 
 ## [0.4.1] - 2026-03-15
 ### Added
