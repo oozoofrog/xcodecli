@@ -499,6 +499,24 @@ func TestResolveCurrentExecutablePathRejectsTemporaryGoBuildOutput(t *testing.T)
 	})
 }
 
+func TestRunExternalCommandHandlesSuccessAndExitError(t *testing.T) {
+	result, err := runExternalCommand(context.Background(), "/bin/sh", []string{"-c", "printf hello"})
+	if err != nil {
+		t.Fatalf("runExternalCommand success returned error: %v", err)
+	}
+	if result.ExitCode != 0 || result.Stdout != "hello" {
+		t.Fatalf("unexpected success result: %+v", result)
+	}
+
+	failResult, failErr := runExternalCommand(context.Background(), "/bin/sh", []string{"-c", "printf boom >&2; exit 7"})
+	if failErr != nil {
+		t.Fatalf("runExternalCommand exit error should be structured, got %v", failErr)
+	}
+	if failResult.ExitCode != 7 || failResult.Stderr != "boom" {
+		t.Fatalf("unexpected exit error result: %+v", failResult)
+	}
+}
+
 func withExecutableResolverStubs(t *testing.T, fn func()) {
 	t.Helper()
 	oldArgv0 := defaultArgv0Func
