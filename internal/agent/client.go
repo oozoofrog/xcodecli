@@ -271,6 +271,15 @@ func doRPC(ctx context.Context, cfg Config, req rpcRequest) (rpcResponse, error)
 		return rpcResponse{}, unavailableError{stage: "connect", err: fmt.Errorf("connect to agent socket %s: %w", cfg.Paths.SocketPath, err)}
 	}
 	defer conn.Close()
+	cancelWatchDone := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = conn.SetDeadline(time.Now())
+		case <-cancelWatchDone:
+		}
+	}()
+	defer close(cancelWatchDone)
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = conn.SetDeadline(deadline)
 	}

@@ -299,14 +299,14 @@ func TestListToolsDoesNotBlockOnRetiredIdleSessionAbort(t *testing.T) {
 		cfg:      Config{ErrOut: io.Discard},
 		sessions: make(map[sessionKey]*pooledSession),
 	}
-	if _, err := s.listTools(rpcRequest{SessionID: "session-a", TimeoutMS: 1000}); err != nil {
+	if _, err := s.listTools(context.Background(), rpcRequest{SessionID: "session-a", TimeoutMS: 1000}); err != nil {
 		t.Fatalf("listTools(session-a) returned error: %v", err)
 	}
 
 	done := make(chan error, 1)
 	started := time.Now()
 	go func() {
-		_, err := s.listTools(rpcRequest{SessionID: "session-b", TimeoutMS: 1000})
+		_, err := s.listTools(context.Background(), rpcRequest{SessionID: "session-b", TimeoutMS: 1000})
 		done <- err
 	}()
 
@@ -473,6 +473,100 @@ func TestCallToolTimeoutIncludesRequestTimeoutMessage(t *testing.T) {
 	}
 	if elapsed := time.Since(started); elapsed > time.Second {
 		t.Fatalf("call timeout took too long: %s", elapsed)
+	}
+}
+
+func TestDoRPCCancelWithoutDeadlineUnblocksRead(t *testing.T) {
+	_, paths := newShortPaths(t)
+	cfg := Config{
+		Paths: paths,
+		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+			client, server := net.Pipe()
+			t.Cleanup(func() { _ = server.Close() })
+			return client, nil
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := doRPC(ctx, cfg, rpcRequest{Method: "tools/list"})
+		done <- err
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected doRPC to return an error after cancellation")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("doRPC did not unblock after cancellation")
+	}
+}
+
+func TestHandleConnCancelsInFlightRequestOnDisconnect(t *testing.T) {
+	oldFactory := newSessionClient
+	t.Cleanup(func() { newSessionClient = oldFactory })
+
+	abortCalled := make(chan struct{})
+	releaseCall := make(chan struct{})
+	newSessionClient = func(ctx context.Context, cfg mcp.Config) (sessionClient, error) {
+		return &fakeSessionClient{
+			callToolFn: func(name string, arguments map[string]any) (mcp.CallResult, error) {
+				<-releaseCall
+				return mcp.CallResult{}, context.Canceled
+			},
+			abortFn: func() error {
+				close(abortCalled)
+				close(releaseCall)
+				return nil
+			},
+		}, nil
+	}
+
+	s := &server{
+		cfg: Config{
+			IdleTimeout: time.Hour,
+			ErrOut:      io.Discard,
+		},
+		sessions: make(map[sessionKey]*pooledSession),
+	}
+
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+
+	done := make(chan struct{})
+	go func() {
+		s.handleConn(serverConn)
+		close(done)
+	}()
+
+	payload, err := json.Marshal(rpcRequest{
+		Method:    "tools/call",
+		ToolName:  "BuildProject",
+		Arguments: map[string]any{"tabIdentifier": "demo"},
+	})
+	if err != nil {
+		t.Fatalf("marshal request failed: %v", err)
+	}
+	if _, err := clientConn.Write(append(payload, '\n')); err != nil {
+		t.Fatalf("clientConn.Write failed: %v", err)
+	}
+	_ = clientConn.Close()
+
+	select {
+	case <-abortCalled:
+	case <-time.After(time.Second):
+		t.Fatal("expected disconnect to abort in-flight request")
+	}
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("handleConn did not return after disconnect")
 	}
 }
 

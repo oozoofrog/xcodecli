@@ -87,6 +87,159 @@ func TestServeStdioRespondsToInitializeListAndCall(t *testing.T) {
 	}
 }
 
+func TestServeStdioNegotiatesSupportedInitializeVersion(t *testing.T) {
+	inReader, inWriter := io.Pipe()
+	outReader, outWriter := io.Pipe()
+	defer inWriter.Close()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- ServeStdio(context.Background(), ServerConfig{
+			In:            inReader,
+			Out:           outWriter,
+			ServerName:    "xcodecli",
+			ServerVersion: "test",
+		}, ServerHandler{
+			ListTools: func(ctx context.Context) ([]map[string]any, error) { return nil, nil },
+			CallTool: func(ctx context.Context, name string, arguments map[string]any) (CallResult, error) {
+				return CallResult{}, nil
+			},
+		})
+		_ = outWriter.Close()
+	}()
+
+	reader := bufio.NewReader(outReader)
+	writeServerRequest(t, inWriter, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "initialize",
+		"params":  map[string]any{"protocolVersion": "2025-03-26"},
+	})
+	resp := readServerResponse(t, reader)
+	if got := decodeObjectValue(t, resp["result"])["protocolVersion"]; got != "2025-03-26" {
+		t.Fatalf("protocolVersion = %#v, want %q", got, "2025-03-26")
+	}
+
+	_ = inWriter.Close()
+	if err := <-errCh; err != nil {
+		t.Fatalf("ServeStdio returned error: %v", err)
+	}
+}
+
+func TestServeStdioRejectsUnsupportedInitializeVersion(t *testing.T) {
+	inReader, inWriter := io.Pipe()
+	outReader, outWriter := io.Pipe()
+	defer inWriter.Close()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- ServeStdio(context.Background(), ServerConfig{
+			In:  inReader,
+			Out: outWriter,
+		}, ServerHandler{
+			ListTools: func(ctx context.Context) ([]map[string]any, error) { return nil, nil },
+			CallTool: func(ctx context.Context, name string, arguments map[string]any) (CallResult, error) {
+				return CallResult{}, nil
+			},
+		})
+		_ = outWriter.Close()
+	}()
+
+	reader := bufio.NewReader(outReader)
+	writeServerRequest(t, inWriter, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "initialize",
+		"params":  map[string]any{"protocolVersion": "2099-01-01"},
+	})
+	resp := readServerResponse(t, reader)
+	errObj := decodeObjectValue(t, resp["error"])
+	if int(errObj["code"].(float64)) != -32602 {
+		t.Fatalf("error code = %#v, want -32602", errObj["code"])
+	}
+	data := decodeObjectValue(t, errObj["data"])
+	if data["requested"] != "2099-01-01" {
+		t.Fatalf("requested = %#v, want 2099-01-01", data["requested"])
+	}
+	supported := data["supported"].([]any)
+	if len(supported) != 3 {
+		t.Fatalf("len(supported) = %d, want 3", len(supported))
+	}
+
+	_ = inWriter.Close()
+	if err := <-errCh; err != nil {
+		t.Fatalf("ServeStdio returned error: %v", err)
+	}
+}
+
+func TestServeStdioCancellationSuppressesResponseAndKeepsServerAlive(t *testing.T) {
+	inReader, inWriter := io.Pipe()
+	outReader, outWriter := io.Pipe()
+	defer inWriter.Close()
+
+	callStarted := make(chan struct{})
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- ServeStdio(context.Background(), ServerConfig{
+			In:            inReader,
+			Out:           outWriter,
+			ServerName:    "xcodecli",
+			ServerVersion: "test",
+		}, ServerHandler{
+			ListTools: func(ctx context.Context) ([]map[string]any, error) {
+				return []map[string]any{{"name": "BuildProject"}}, nil
+			},
+			CallTool: func(ctx context.Context, name string, arguments map[string]any) (CallResult, error) {
+				close(callStarted)
+				<-ctx.Done()
+				return CallResult{}, ctx.Err()
+			},
+		})
+		_ = outWriter.Close()
+	}()
+
+	reader := bufio.NewReader(outReader)
+	writeServerRequest(t, inWriter, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      "call-1",
+		"method":  "tools/call",
+		"params": map[string]any{
+			"name":      "BuildProject",
+			"arguments": map[string]any{"tabIdentifier": "demo"},
+		},
+	})
+	<-callStarted
+	writeServerRequest(t, inWriter, map[string]any{
+		"jsonrpc": "2.0",
+		"method":  "notifications/cancelled",
+		"params":  map[string]any{"requestId": "call-1", "reason": "client abort"},
+	})
+	writeServerRequest(t, inWriter, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      2,
+		"method":  "tools/list",
+		"params":  map[string]any{},
+	})
+
+	resp := readServerResponse(t, reader)
+	if got := int(resp["id"].(float64)); got != 2 {
+		t.Fatalf("response id = %v, want 2", resp["id"])
+	}
+
+	_ = inWriter.Close()
+	if err := <-errCh; err != nil {
+		t.Fatalf("ServeStdio returned error: %v", err)
+	}
+
+	line, err := reader.ReadString('\n')
+	if err != io.EOF {
+		t.Fatalf("expected EOF after cancellation, got line=%q err=%v", line, err)
+	}
+	if line != "" {
+		t.Fatalf("unexpected extra response after cancellation: %q", line)
+	}
+}
+
 func TestServeStdioUnknownMethodReturnsMethodNotFound(t *testing.T) {
 	inReader, inWriter := io.Pipe()
 	outReader, outWriter := io.Pipe()
