@@ -66,3 +66,19 @@ func requestWithRemainingTimeout(ctx context.Context, req rpcRequest) (rpcReques
 	}
 	return req, nil
 }
+
+func timeoutBudgetMillis(ctx context.Context, configuredTimeoutMS int64) int64 {
+	if deadline, ok := ctx.Deadline(); ok {
+		remaining := time.Until(deadline)
+		if remaining > 0 {
+			remainingMS := remaining.Milliseconds()
+			if remainingMS == 0 {
+				remainingMS = 1
+			}
+			if configuredTimeoutMS <= 0 || remainingMS < configuredTimeoutMS {
+				return remainingMS
+			}
+		}
+	}
+	return configuredTimeoutMS
+}

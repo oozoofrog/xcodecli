@@ -215,6 +215,60 @@ func TestListToolsRecyclesLaunchAgentWhenRegisteredBinaryChanges(t *testing.T) {
 	}
 }
 
+func TestListToolsRecyclesLaunchAgentWhenBinaryIdentityChangesAtSamePath(t *testing.T) {
+	tempDir, paths := newShortPaths(t)
+	spawnFile := filepath.Join(tempDir, "spawn.log")
+	binaryPath := filepath.Join(tempDir, "xcodecli-bin")
+	if err := os.WriteFile(binaryPath, []byte("old-binary"), 0o755); err != nil {
+		t.Fatalf("WriteFile(%q) failed: %v", binaryPath, err)
+	}
+
+	serverCfg := testServerConfig(t, paths, spawnFile, 5*time.Second)
+	serverCfg.ExecutablePath = func() (string, error) { return binaryPath, nil }
+	harness := newServerHarness(t, serverCfg)
+	launchd := &fakeLaunchd{harness: harness, bootstrapped: true}
+	clientCfg := testClientConfig(paths, spawnFile, 5*time.Second, launchd)
+	clientCfg.ExecutablePath = func() (string, error) { return binaryPath, nil }
+
+	if err := os.WriteFile(paths.PlistPath, []byte(renderLaunchAgentPlist(paths, LaunchAgentLabel, binaryPath)), 0o644); err != nil {
+		t.Fatalf("WriteFile(%q) failed: %v", paths.PlistPath, err)
+	}
+	if err := harness.start(); err != nil {
+		t.Fatalf("harness.start() returned error: %v", err)
+	}
+
+	if err := os.WriteFile(binaryPath, []byte("new-binary"), 0o755); err != nil {
+		t.Fatalf("WriteFile(%q) failed: %v", binaryPath, err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := ListTools(ctx, clientCfg, Request{Timeout: 2 * time.Second}); err != nil {
+		t.Fatalf("ListTools returned error: %v", err)
+	}
+
+	currentIdentity, err := binaryIdentityForExecutable(binaryPath)
+	if err != nil {
+		t.Fatalf("binaryIdentityForExecutable returned error: %v", err)
+	}
+	persistedIdentity, err := readBinaryIdentity(binaryIdentityPath(paths))
+	if err != nil {
+		t.Fatalf("readBinaryIdentity returned error: %v", err)
+	}
+	if persistedIdentity != currentIdentity {
+		t.Fatalf("persisted binary identity = %q, want %q", persistedIdentity, currentIdentity)
+	}
+	if launchd.bootoutCalls != 1 {
+		t.Fatalf("bootoutCalls = %d, want 1", launchd.bootoutCalls)
+	}
+	if launchd.bootstrapCalls != 1 {
+		t.Fatalf("bootstrapCalls = %d, want 1", launchd.bootstrapCalls)
+	}
+	if count := helperSpawnCount(t, spawnFile); count != 1 {
+		t.Fatalf("backend helper spawn count = %d, want 1 after same-path recycle", count)
+	}
+}
+
 func TestListToolsDoesNotBlockOnRetiredIdleSessionAbort(t *testing.T) {
 	oldFactory := newSessionClient
 	t.Cleanup(func() { newSessionClient = oldFactory })
@@ -360,8 +414,11 @@ func TestListToolsAutostartHonorsCallerTimeout(t *testing.T) {
 	defer cancel()
 	started := time.Now()
 	_, err := ListTools(ctx, clientCfg, Request{Timeout: 5 * time.Second})
-	if err == nil || !strings.Contains(err.Error(), "context deadline exceeded") {
+	if err == nil || !strings.Contains(err.Error(), "starting the LaunchAgent or initializing the mcpbridge session") || !strings.Contains(err.Error(), "context deadline exceeded") {
 		t.Fatalf("expected caller timeout error, got %v", err)
+	}
+	if strings.Contains(err.Error(), "after 5s") {
+		t.Fatalf("expected caller timeout message to use remaining budget, got %v", err)
 	}
 	if elapsed := time.Since(started); elapsed > time.Second {
 		t.Fatalf("autostart timeout took too long: %s", elapsed)
@@ -402,8 +459,11 @@ func TestCallToolTimeoutIncludesRequestTimeoutMessage(t *testing.T) {
 	defer cancel()
 	started := time.Now()
 	_, err := CallTool(ctx, clientCfg, Request{Timeout: 500 * time.Millisecond}, "BuildProject", map[string]any{"tabIdentifier": "demo"})
-	if err == nil || !strings.Contains(err.Error(), "request timed out after 500ms while calling BuildProject") {
+	if err == nil || !strings.Contains(err.Error(), "while calling BuildProject") {
 		t.Fatalf("expected request timeout message, got %v", err)
+	}
+	if strings.Contains(err.Error(), "after 500ms") {
+		t.Fatalf("expected request timeout message to use remaining budget after cold start, got %v", err)
 	}
 	if !strings.Contains(err.Error(), "not the mcpbridge session idle timeout") {
 		t.Fatalf("expected idle-timeout clarification, got %v", err)

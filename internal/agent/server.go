@@ -60,6 +60,17 @@ func RunServer(ctx context.Context, cfg Config) error {
 	if err := os.MkdirAll(cfg.Paths.SupportDir, 0o700); err != nil {
 		return fmt.Errorf("create agent support directory: %w", err)
 	}
+	executablePath, err := cfg.ExecutablePath()
+	if err != nil {
+		return err
+	}
+	identity, err := binaryIdentityForExecutable(executablePath)
+	if err != nil {
+		return err
+	}
+	if err := writeBinaryIdentity(binaryIdentityPath(cfg.Paths), identity); err != nil {
+		return err
+	}
 	if err := os.Remove(cfg.Paths.SocketPath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove stale socket: %w", err)
 	}

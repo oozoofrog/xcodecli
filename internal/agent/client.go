@@ -153,20 +153,24 @@ func Uninstall(ctx context.Context, cfg Config) error {
 }
 
 func doWithAutostart(ctx context.Context, cfg Config, req rpcRequest) (rpcResponse, error) {
-	mismatch, registeredBinary, currentBinary := launchAgentBinaryMismatch(cfg)
+	mismatch, mismatchReason := launchAgentBinaryMismatch(cfg)
 	if mismatch {
 		if req.Debug {
-			fmt.Fprintf(cfg.ErrOut, "[debug] registered LaunchAgent binary %s does not match current binary %s; recycling LaunchAgent %s\n", registeredBinary, currentBinary, cfg.Label)
+			fmt.Fprintf(cfg.ErrOut, "[debug] %s; recycling LaunchAgent %s\n", mismatchReason, cfg.Label)
 		}
-		if err := ensureAgentReady(ctx, cfg); err != nil {
+		startupReq, reqErr := requestWithRemainingTimeout(ctx, req)
+		if reqErr != nil {
+			return rpcResponse{}, requestTimeoutError(timeoutBudgetMillis(ctx, req.TimeoutMS), "starting the LaunchAgent or initializing the mcpbridge session", reqErr)
+		}
+		if err := ensureAgentReady(ctx, cfg, true); err != nil {
 			if ctx.Err() != nil {
-				return rpcResponse{}, requestTimeoutError(req.TimeoutMS, "starting the LaunchAgent or initializing the mcpbridge session", ctx.Err())
+				return rpcResponse{}, requestTimeoutError(startupReq.TimeoutMS, "starting the LaunchAgent or initializing the mcpbridge session", ctx.Err())
 			}
 			return rpcResponse{}, err
 		}
 		effectiveReq, err := requestWithRemainingTimeout(ctx, req)
 		if err != nil {
-			return rpcResponse{}, requestTimeoutError(req.TimeoutMS, requestTimeoutAction(req.Method, req.ToolName), err)
+			return rpcResponse{}, requestTimeoutError(timeoutBudgetMillis(ctx, req.TimeoutMS), requestTimeoutAction(req.Method, req.ToolName), err)
 		}
 		resp, err := doRPC(ctx, cfg, effectiveReq)
 		if err != nil {
@@ -177,9 +181,9 @@ func doWithAutostart(ctx context.Context, cfg Config, req rpcRequest) (rpcRespon
 			if ctx.Err() != nil {
 				var unavailable unavailableError
 				if errors.As(err, &unavailable) && unavailable.stage == "connect" {
-					return rpcResponse{}, requestTimeoutError(req.TimeoutMS, "connecting to the LaunchAgent after startup", ctx.Err())
+					return rpcResponse{}, requestTimeoutError(effectiveReq.TimeoutMS, "connecting to the LaunchAgent after startup", ctx.Err())
 				}
-				return rpcResponse{}, requestTimeoutError(req.TimeoutMS, requestTimeoutAction(req.Method, req.ToolName), ctx.Err())
+				return rpcResponse{}, requestTimeoutError(effectiveReq.TimeoutMS, requestTimeoutAction(req.Method, req.ToolName), ctx.Err())
 			}
 		}
 		return resp, err
@@ -187,7 +191,7 @@ func doWithAutostart(ctx context.Context, cfg Config, req rpcRequest) (rpcRespon
 
 	effectiveReq, err := requestWithRemainingTimeout(ctx, req)
 	if err != nil {
-		return rpcResponse{}, requestTimeoutError(req.TimeoutMS, requestTimeoutAction(req.Method, req.ToolName), err)
+		return rpcResponse{}, requestTimeoutError(timeoutBudgetMillis(ctx, req.TimeoutMS), requestTimeoutAction(req.Method, req.ToolName), err)
 	}
 	resp, err := doRPC(ctx, cfg, effectiveReq)
 	if err == nil {
@@ -199,15 +203,19 @@ func doWithAutostart(ctx context.Context, cfg Config, req rpcRequest) (rpcRespon
 	if req.Debug {
 		fmt.Fprintf(cfg.ErrOut, "[debug] agent socket unavailable, ensuring LaunchAgent %s\n", cfg.Label)
 	}
-	if err := ensureAgentReady(ctx, cfg); err != nil {
+	startupReq, reqErr := requestWithRemainingTimeout(ctx, req)
+	if reqErr != nil {
+		return rpcResponse{}, requestTimeoutError(timeoutBudgetMillis(ctx, req.TimeoutMS), "starting the LaunchAgent or initializing the mcpbridge session", reqErr)
+	}
+	if err := ensureAgentReady(ctx, cfg, false); err != nil {
 		if ctx.Err() != nil {
-			return rpcResponse{}, requestTimeoutError(req.TimeoutMS, "starting the LaunchAgent or initializing the mcpbridge session", ctx.Err())
+			return rpcResponse{}, requestTimeoutError(startupReq.TimeoutMS, "starting the LaunchAgent or initializing the mcpbridge session", ctx.Err())
 		}
 		return rpcResponse{}, err
 	}
 	effectiveReq, err = requestWithRemainingTimeout(ctx, req)
 	if err != nil {
-		return rpcResponse{}, requestTimeoutError(req.TimeoutMS, requestTimeoutAction(req.Method, req.ToolName), err)
+		return rpcResponse{}, requestTimeoutError(timeoutBudgetMillis(ctx, req.TimeoutMS), requestTimeoutAction(req.Method, req.ToolName), err)
 	}
 	resp, err = doRPC(ctx, cfg, effectiveReq)
 	if err != nil {
@@ -218,24 +226,43 @@ func doWithAutostart(ctx context.Context, cfg Config, req rpcRequest) (rpcRespon
 		if ctx.Err() != nil {
 			var unavailable unavailableError
 			if errors.As(err, &unavailable) && unavailable.stage == "connect" {
-				return rpcResponse{}, requestTimeoutError(req.TimeoutMS, "connecting to the LaunchAgent after startup", ctx.Err())
+				return rpcResponse{}, requestTimeoutError(effectiveReq.TimeoutMS, "connecting to the LaunchAgent after startup", ctx.Err())
 			}
-			return rpcResponse{}, requestTimeoutError(req.TimeoutMS, requestTimeoutAction(req.Method, req.ToolName), ctx.Err())
+			return rpcResponse{}, requestTimeoutError(effectiveReq.TimeoutMS, requestTimeoutAction(req.Method, req.ToolName), ctx.Err())
 		}
 	}
 	return resp, err
 }
 
-func launchAgentBinaryMismatch(cfg Config) (bool, string, string) {
-	registeredBinary, err := readLaunchAgentBinaryPath(cfg.Paths.PlistPath)
-	if err != nil || strings.TrimSpace(registeredBinary) == "" {
-		return false, "", ""
-	}
+func launchAgentBinaryMismatch(cfg Config) (bool, string) {
 	currentBinary, err := cfg.ExecutablePath()
 	if err != nil || strings.TrimSpace(currentBinary) == "" {
-		return false, registeredBinary, ""
+		return false, ""
 	}
-	return !samePath(currentBinary, registeredBinary), registeredBinary, currentBinary
+
+	registeredBinary, err := readLaunchAgentBinaryPath(cfg.Paths.PlistPath)
+	if err == nil && strings.TrimSpace(registeredBinary) != "" && !samePath(currentBinary, registeredBinary) {
+		return true, fmt.Sprintf("registered LaunchAgent binary %s does not match current binary %s", registeredBinary, currentBinary)
+	}
+
+	currentIdentity, err := binaryIdentityForExecutable(currentBinary)
+	if err != nil {
+		return false, ""
+	}
+
+	persistedIdentity, err := readBinaryIdentity(binaryIdentityPath(cfg.Paths))
+	switch {
+	case err == nil:
+		if persistedIdentity != currentIdentity {
+			return true, fmt.Sprintf("stored LaunchAgent binary identity does not match current binary %s", currentBinary)
+		}
+	case os.IsNotExist(err):
+		if strings.TrimSpace(registeredBinary) != "" {
+			return true, fmt.Sprintf("LaunchAgent binary identity file %s is missing", binaryIdentityPath(cfg.Paths))
+		}
+	}
+
+	return false, ""
 }
 
 func doRPC(ctx context.Context, cfg Config, req rpcRequest) (rpcResponse, error) {
@@ -270,7 +297,7 @@ func doRPC(ctx context.Context, cfg Config, req rpcRequest) (rpcResponse, error)
 	return resp, nil
 }
 
-func ensureAgentReady(ctx context.Context, cfg Config) error {
+func ensureAgentReady(ctx context.Context, cfg Config, forceRestart bool) error {
 	if err := os.MkdirAll(cfg.Paths.SupportDir, 0o700); err != nil {
 		return fmt.Errorf("create agent support directory: %w", err)
 	}
@@ -283,7 +310,7 @@ func ensureAgentReady(ctx context.Context, cfg Config) error {
 		return err
 	}
 	serviceTarget := launchAgentServiceTarget(cfg.Label)
-	if changed {
+	if forceRestart || changed {
 		_ = cfg.Launchd.Bootout(ctx, serviceTarget)
 		if err := cfg.Launchd.Bootstrap(ctx, launchAgentDomainTarget(), cfg.Paths.PlistPath); err != nil {
 			return fmt.Errorf("bootstrap LaunchAgent %s: %w", cfg.Label, err)
