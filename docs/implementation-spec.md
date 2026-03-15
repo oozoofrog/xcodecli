@@ -1,93 +1,93 @@
-# xcodecli 구현 명세서
+# xcodecli Implementation Specification
 
 > Baseline version: `v0.5.0`
 >
-> 이 문서는 `xcodecli`의 공개 기능, 내부 구조, 프로토콜, 설치/배포/운영 규칙을 **다른 언어에서도 재구현 가능한 수준**으로 정리한 기술 명세서입니다.
+> This document describes `xcodecli` at a level detailed enough to reimplement it in another language, including its public CLI contract, internal architecture, protocols, persistence rules, installation flow, release flow, and operational assumptions.
 >
-> English version: [`implementation-spec.en.md`](./implementation-spec.en.md)
+> Korean version: [`implementation-spec.kr.md`](./implementation-spec.kr.md)
 
 ---
 
-## 문서 목적
-- 다른 언어/런타임으로 `xcodecli`를 포팅하려는 엔지니어에게 구현 기준 제공
-- CLI/MCP/runtime 동작을 정확히 이해해야 하는 에이전트/자동화 작성자에게 계약 문서 제공
-- 설치/배포/운영 흐름을 재현해야 하는 릴리스 담당자에게 운영 스펙 제공
+## Purpose
+- Provide a full implementation contract for engineers porting `xcodecli` to another language/runtime
+- Provide an exact behavioral reference for automation and agent authors
+- Provide an operational reference for installation, release, and Homebrew distribution
 
-## 목차
-- [1. 제품 개요](#1-제품-개요)
-- [2. 전역 제약 조건](#2-전역-제약-조건)
-- [3. 시스템 아키텍처](#3-시스템-아키텍처)
-- [4. 상태 저장과 로컬 경로](#4-상태-저장과-로컬-경로)
-- [5. 옵션 및 환경 변수 우선순위](#5-옵션-및-환경-변수-우선순위)
-- [6. 공개 CLI 계약](#6-공개-cli-계약)
-- [7. 내부 RPC 및 MCP 프로토콜](#7-내부-rpc-및-mcp-프로토콜)
-- [8. timeout / cancellation 규칙](#8-timeout--cancellation-규칙)
-- [9. 빌드 / 설치 / 릴리스 / 운영](#9-빌드--설치--릴리스--운영)
-- [10. 포팅 체크리스트](#10-포팅-체크리스트)
-- [11. 권장 포트 구조](#11-권장-포트-구조)
+## Table of Contents
+- [1. Product Overview](#1-product-overview)
+- [2. Global Constraints](#2-global-constraints)
+- [3. System Architecture](#3-system-architecture)
+- [4. Persistence and Local Paths](#4-persistence-and-local-paths)
+- [5. Options and Environment Variable Precedence](#5-options-and-environment-variable-precedence)
+- [6. Public CLI Contract](#6-public-cli-contract)
+- [7. Internal RPC and MCP Protocol](#7-internal-rpc-and-mcp-protocol)
+- [8. Timeout and Cancellation Rules](#8-timeout-and-cancellation-rules)
+- [9. Build / Install / Release / Operations](#9-build--install--release--operations)
+- [10. Porting Checklist](#10-porting-checklist)
+- [11. Recommended Port Structure](#11-recommended-port-structure)
 
 ---
 
-## 1. 제품 개요
+## 1. Product Overview
 
-### 1.1 제품명
+### 1.1 Name
 - `xcodecli`
 
-### 1.2 제품 유형
-- macOS 전용 CLI 도구
-- `xcrun mcpbridge`를 감싸는 Go 기반 operator-friendly wrapper
+### 1.2 Product Type
+- macOS-only CLI tool
+- A Go-based operator-friendly wrapper around `xcrun mcpbridge`
 
-### 1.3 핵심 역할
-- raw stdio bridge 제공
-- stdio MCP server 제공
-- LaunchAgent-backed pooled runtime 제공
-- Xcode MCP 도구 discovery / inspect / call 기능 제공
-- MCP 클라이언트(Codex/Claude/Gemini) 등록 커맨드 생성/실행 제공
-- 환경 진단 및 read-only workflow guidance 제공
+### 1.3 Core Responsibilities
+- Provide a raw stdio bridge to `xcrun mcpbridge`
+- Provide a stdio MCP server (`serve`)
+- Provide a LaunchAgent-backed pooled runtime
+- Expose Xcode MCP tool discovery / inspect / call flows
+- Generate and optionally execute MCP registration commands for Codex / Claude / Gemini
+- Provide environment diagnostics and read-only workflow guidance
 
-### 1.4 비목표
-- macOS 외 플랫폼 지원 없음
-- 자체 Xcode 도구 구현 없음
-- 원격 서버/클라우드 서비스 제공 없음
-
----
-
-## 2. 전역 제약 조건
-
-### 2.1 플랫폼
-- 지원 OS: `darwin` only
-- `runtime.GOOS != "darwin"`이면 stderr에 아래 메시지를 출력하고 종료
-  - `xcodecli: only macOS (darwin) is supported`
-- 종료 코드: `1`
-
-### 2.2 Xcode 전제 조건
-- `bridge`, `serve`, `tools`, `tool`, `agent guide`, `agent demo`는 실질적으로 Xcode/MCP 환경 준비를 전제로 함
-- `tools` / `tool` 계열은 일반적으로:
-  - Xcode 실행 중
-  - 최소 하나의 workspace/project window open 상태 필요
-
-### 2.3 stdout / stderr 규칙
-- `bridge`: stdout은 프로토콜 전용
-- `serve`: stdout은 MCP JSON-RPC 전용
-- 사람이 읽는 로그/디버그/진단은 stderr만 사용
-
-### 2.4 파괴적 작업 원칙
-- 설치/릴리스/Homebrew push 같은 외부 상태 변경은 마지막 단계에 수행
-- release/Homebrew는 dry-run 가능 시 먼저 검증
+### 1.4 Non-goals
+- No non-macOS support
+- No custom Xcode tool implementation
+- No remote hosted service / SaaS behavior
 
 ---
 
-## 3. 시스템 아키텍처
+## 2. Global Constraints
 
-### 3.1 계층 구조
-#### Raw bridge 계층
+### 2.1 Platform
+- Supported OS: `darwin` only
+- If `runtime.GOOS != "darwin"`, the process must exit with:
+  - stderr: `xcodecli: only macOS (darwin) is supported`
+  - exit code: `1`
+
+### 2.2 Xcode Assumptions
+- `bridge`, `serve`, `tools`, `tool`, `agent guide`, and `agent demo` all assume a valid local Xcode/MCP environment
+- `tools` / `tool` flows generally assume:
+  - Xcode is running
+  - At least one workspace/project window is open
+
+### 2.3 stdout / stderr Rules
+- `bridge`: stdout is protocol-only
+- `serve`: stdout is MCP JSON-RPC only
+- Human-readable logs, debug output, and diagnostics go to stderr only
+
+### 2.4 Destructive Operations
+- Installation, release publication, and Homebrew push are last-step operations
+- Release/Homebrew flows should prefer dry-run or local validation first whenever possible
+
+---
+
+## 3. System Architecture
+
+### 3.1 Layering
+#### Raw bridge layer
 - `bridge`
-  - `xcrun mcpbridge`에 대한 raw stdio passthrough
+  - Raw stdio passthrough to `xcrun mcpbridge`
 - `serve`
-  - `xcodecli` 자체가 stdio MCP server 역할 수행
-  - 내부적으로 LaunchAgent-backed pooled runtime 재사용
+  - `xcodecli` acts as a stdio MCP server itself
+  - Reuses the LaunchAgent-backed pooled runtime internally
 
-#### Operator-friendly 계층
+#### Operator-friendly layer
 - `doctor`
 - `mcp config` / `mcp <client>`
 - `tools list`
@@ -98,24 +98,24 @@
 - `agent status`
 - `agent stop`
 - `agent uninstall`
-- `agent run` (내부 전용)
+- `agent run` (internal-only)
 
-### 3.2 내부 패키지 역할
+### 3.2 Internal Package Responsibilities
 - `internal/bridge`
-  - env 옵션 해석
-  - persistent session-id 생성/재사용
-  - raw child-process bridge
+  - Environment option resolution
+  - Persistent session-id creation/reuse
+  - Raw child-process bridge execution
 - `internal/agent`
   - LaunchAgent-backed runtime
-  - local Unix socket RPC client/server
-  - pooled `mcpbridge` session 관리
+  - Local Unix socket RPC client/server
+  - Pooled `mcpbridge` session management
 - `internal/mcp`
   - MCP stdio client
-  - MCP stdio server (`serve` 구현)
+  - MCP stdio server (`serve` implementation)
 - `internal/doctor`
-  - 환경 진단 보고서 생성
+  - Environment diagnostics report generation
 
-### 3.3 런타임 토폴로지
+### 3.3 Runtime Topologies
 #### `bridge`
 ```text
 stdin/stdout/stderr
@@ -151,18 +151,18 @@ xcodecli tools/tool command
 
 ---
 
-## 4. 상태 저장과 로컬 경로
+## 4. Persistence and Local Paths
 
-### 4.1 Persistent session file
-- 경로: `~/Library/Application Support/xcodecli/session-id`
-- 용도: `MCP_XCODE_SESSION_ID` 재사용
-- 생성 권한:
-  - 디렉터리: `0700`
-  - 파일: `0600`
-- 파일 내용:
-  - UUID 문자열 1줄 + trailing newline
+### 4.1 Persistent Session File
+- Path: `~/Library/Application Support/xcodecli/session-id`
+- Purpose: reuse `MCP_XCODE_SESSION_ID`
+- Permissions:
+  - directory: `0700`
+  - file: `0600`
+- Contents:
+  - one UUID line plus a trailing newline
 
-### 4.2 LaunchAgent 경로
+### 4.2 LaunchAgent Paths
 - label: `io.oozoofrog.xcodecli`
 - support dir: `~/Library/Application Support/xcodecli`
 - socket path: `~/Library/Application Support/xcodecli/daemon.sock`
@@ -170,7 +170,7 @@ xcodecli tools/tool command
 - log path: `~/Library/Application Support/xcodecli/agent.log`
 - plist path: `~/Library/LaunchAgents/io.oozoofrog.xcodecli.plist`
 
-### 4.3 LaunchAgent plist 규칙
+### 4.3 LaunchAgent plist Rules
 - ProgramArguments:
   1. current binary path
   2. `agent`
@@ -182,14 +182,14 @@ xcodecli tools/tool command
 
 ---
 
-## 5. 옵션 및 환경 변수 우선순위
+## 5. Options and Environment Variable Precedence
 
-### 5.1 관련 환경 변수
+### 5.1 Relevant Environment Variables
 - `MCP_XCODE_PID`
 - `MCP_XCODE_SESSION_ID`
 - `DEVELOPER_DIR`
 
-### 5.2 우선순위
+### 5.2 Precedence
 #### Xcode PID
 1. `--xcode-pid`
 2. env `MCP_XCODE_PID`
@@ -198,42 +198,42 @@ xcodecli tools/tool command
 1. `--session-id`
 2. env `MCP_XCODE_SESSION_ID`
 3. persistent session file
-4. 새 UUID 생성 후 파일 저장
+4. generate a new UUID and persist it
 
-### 5.3 Session source enum
+### 5.3 Session Source Enum
 - `explicit`
 - `env`
 - `persisted`
 - `generated`
 - `unset`
 
-### 5.4 유효성 규칙
-- PID: 양의 정수
-- Session ID: UUID 형식
+### 5.4 Validation Rules
+- PID must be a positive integer
+- Session ID must be a UUID
 
 ---
 
-## 6. 공개 CLI 계약
+## 6. Public CLI Contract
 
-### 6.1 루트 파싱 규칙
-#### 인자 없음
+### 6.1 Root Parsing Rules
+#### No arguments
 ```bash
 xcodecli
 ```
-- root help 출력
-- 종료 코드: `0`
+- Print root help
+- Exit code: `0`
 
-#### 첫 토큰이 플래그인 경우
+#### First token is a flag
 ```bash
 xcodecli --xcode-pid 123 --session-id ... --debug
 ```
-- `bridge` shorthand로 해석
+- Interpreted as the `bridge` shorthand form
 
-#### 공통 에러 출력
+#### Common error output
 - stderr prefix: `xcodecli: ...`
-- 일반 실패 exit code: `1`
+- general failure exit code: `1`
 
-### 6.2 명령 목록
+### 6.2 Command List
 - `version`
 - `bridge`
 - `serve`
@@ -242,68 +242,68 @@ xcodecli --xcode-pid 123 --session-id ... --debug
 - `tools`
 - `tool`
 - `agent`
-- 내부 전용: `agent run`
+- internal only: `agent run`
 
 ### 6.3 `version`
-#### 사용법
+#### Usage
 ```bash
 xcodecli version
 xcodecli --version
 ```
 
-#### 출력
+#### Output
 - release build: `xcodecli v0.5.0`
 - dev build: `xcodecli v0.5.0 (dev)`
 
 ### 6.4 `bridge`
-#### 사용법
+#### Usage
 ```bash
 xcodecli bridge [--xcode-pid PID] [--session-id UUID] [--debug]
 xcodecli [--xcode-pid PID] [--session-id UUID] [--debug]
 ```
 
-#### 플래그
+#### Flags
 - `--xcode-pid PID`
 - `--session-id UUID`
 - `--debug`
 - `-h`, `--help`
 
-#### 동작 알고리즘
-1. effective options 해석
-2. env override 적용
-3. `xcrun mcpbridge` child process 시작
-4. stdin/stdout/stderr를 child process와 연결
-5. child exit code 반환
+#### Algorithm
+1. Resolve effective options
+2. Apply environment overrides
+3. Launch `xcrun mcpbridge`
+4. Connect stdin/stdout/stderr directly to the child process
+5. Return the child exit code
 
-#### 출력 계약
-- stdout: 프로토콜 전용
-- stderr: wrapper error/debug 전용
+#### Output contract
+- stdout: protocol-only
+- stderr: wrapper error/debug only
 
-#### 종료 코드
-- child exit code 전달
-- wrapper 내부 오류 시 `1`
+#### Exit codes
+- child exit code is propagated
+- internal wrapper failures return `1`
 
 ### 6.5 `serve`
-#### 사용법
+#### Usage
 ```bash
 xcodecli serve [--xcode-pid PID] [--session-id UUID] [--debug]
 ```
 
-#### 플래그
+#### Flags
 - `--xcode-pid PID`
 - `--session-id UUID`
 - `--debug`
 - `-h`, `--help`
 
-#### handler forwarding 규칙
+#### Handler forwarding rules
 - `ListTools` → `agent.ListTools`
 - `CallTool` → `agent.CallTool`
-- request forwarding 시 `agent.BuildRequest(..., timeout=0, debug=<cli debug>)`
-- 별도 `--timeout` 플래그 없음
+- Request forwarding uses `agent.BuildRequest(..., timeout=0, debug=<cli debug>)`
+- There is no explicit `--timeout` flag for `serve`
 
-#### 지원 MCP 메서드
+#### Supported MCP methods
 ##### initialize
-입력 예:
+Input example:
 ```json
 {
   "jsonrpc": "2.0",
@@ -313,32 +313,32 @@ xcodecli serve [--xcode-pid PID] [--session-id UUID] [--debug]
 }
 ```
 
-지원 버전:
+Supported versions:
 - `2025-06-18`
 - `2025-03-26`
 - `2024-11-05`
 
-응답 규칙:
-- 지원 버전이면 그 버전을 그대로 `protocolVersion`으로 echo
-- 미지원이면 `-32602` + `{requested, supported}` data 포함
+Response rules:
+- If the version is supported, echo it back as `protocolVersion`
+- If unsupported, return `-32602` with `{requested, supported}` in `data`
 
 ##### notifications/initialized
-- 응답 없음
-- 무시 가능
+- No response
+- Can be ignored
 
 ##### notifications/cancelled
-- `requestId`(string 또는 number) 기반 취소
-- in-flight request context 취소
-- 취소된 요청 결과는 stdout에 쓰지 않음
+- Cancels an in-flight request by `requestId` (string or number)
+- Cancels the in-flight request context
+- Suppresses the response if the cancelled request eventually completes
 
 ##### tools/list
-응답 payload:
+Response payload:
 ```json
 {"tools": [ ... ]}
 ```
 
 ##### tools/call
-입력 params:
+Input params:
 ```json
 {
   "name": "BuildProject",
@@ -346,28 +346,28 @@ xcodecli serve [--xcode-pid PID] [--session-id UUID] [--debug]
 }
 ```
 
-응답 payload:
-- backend result object 그대로 복사
-- tool-level failure면 `isError: true` 포함
+Response payload:
+- Copy the backend result object verbatim
+- Include `isError: true` when the tool-level result is an error
 
-##### 중복 request id
-- 이미 진행 중인 request id가 다시 들어오면 `-32600`
+##### Duplicate request IDs
+- If the same request ID is already in progress, return `-32600`
 
-#### 출력 계약
+#### Output contract
 - stdout: MCP JSON-RPC only
 - stderr: debug / diagnostics only
 
-#### 종료 코드
-- 정상 종료: `0`
-- validate/serve runtime 오류: `1`
+#### Exit codes
+- normal server termination: `0`
+- validation or serve runtime failure: `1`
 
 ### 6.6 `doctor`
-#### 사용법
+#### Usage
 ```bash
 xcodecli doctor [--json] [--xcode-pid PID] [--session-id UUID]
 ```
 
-#### 진단 항목 예
+#### Diagnostic checks (representative)
 - `xcrun lookup`
 - `xcrun mcpbridge --help`
 - `xcode-select -p`
@@ -375,9 +375,9 @@ xcodecli doctor [--json] [--xcode-pid PID] [--session-id UUID]
 - `effective MCP_XCODE_PID`
 - `effective MCP_XCODE_SESSION_ID`
 - `spawn smoke test`
-- optional LaunchAgent status info
+- optional LaunchAgent status checks
 
-#### JSON 출력
+#### JSON output
 ```json
 {
   "success": true,
@@ -388,22 +388,22 @@ xcodecli doctor [--json] [--xcode-pid PID] [--session-id UUID]
 }
 ```
 
-#### 텍스트 출력
-- `[OK]`, `[WARN]`, `[FAIL]`, `[INFO]` 접두 상태 아이콘
-- 마지막 summary line 포함
+#### Text output
+- `[OK]`, `[WARN]`, `[FAIL]`, `[INFO]` status prefixes
+- Final summary line included
 
-#### 종료 코드
+#### Exit codes
 - `success == true` → `0`
-- 아니면 `1`
+- otherwise `1`
 
 ### 6.7 `mcp`
-#### 서브커맨드
+#### Subcommands
 - `mcp config`
 - `mcp codex`
 - `mcp claude`
 - `mcp gemini`
 
-#### `mcp config` 사용법
+#### `mcp config` usage
 ```bash
 xcodecli mcp config \
   --client <claude|codex|gemini> \
@@ -416,17 +416,17 @@ xcodecli mcp config \
   [--session-id UUID]
 ```
 
-#### 기본값
+#### Defaults
 - `mode = agent`
 - `name = xcodecli`
 - Claude scope default = `local`
 - Gemini scope default = `user`
 
-#### mode 의미
+#### Mode semantics
 - `agent` → server command = `xcodecli serve`
 - `bridge` → server command = `xcodecli bridge`
 
-#### client별 registration command
+#### Client-specific registration commands
 ##### Codex
 ```bash
 codex mcp add <name> [--env KEY=VALUE ...] -- <xcodecli path> serve|bridge
@@ -437,7 +437,7 @@ codex mcp add <name> [--env KEY=VALUE ...] -- <xcodecli path> serve|bridge
 claude mcp add-json -s <scope> <name> '<json payload>'
 ```
 
-payload shape:
+Payload shape:
 ```json
 {
   "type": "stdio",
@@ -452,11 +452,11 @@ payload shape:
 gemini mcp add -s <scope> <name> <xcodecli path> serve|bridge
 ```
 
-#### `--write` 동작
-- Codex/Gemini: 1회 add command 실행
-- Claude: add-json 실패 메시지가 `already exists`면 remove 후 retry
+#### `--write` behavior
+- Codex / Gemini: execute one add command
+- Claude: if add-json fails with `already exists`, remove and retry
 
-#### JSON 출력 스키마
+#### JSON output schema
 ```json
 {
   "client": "codex",
@@ -480,32 +480,32 @@ gemini mcp add -s <scope> <name> <xcodecli path> serve|bridge
 }
 ```
 
-#### 중요한 제약
-- output-only mode는 persistent session file을 만들지 않음
-- temp Go build binary 경로는 거부
-- Codex는 `--scope` 미지원
+#### Important constraints
+- Output-only mode must not create the persistent session file
+- Temporary Go build binaries must be rejected as registration targets
+- Codex does not support `--scope`
 
 ### 6.8 `tools list`
-#### 사용법
+#### Usage
 ```bash
 xcodecli tools list [--json] [--timeout 60s] [--xcode-pid PID] [--session-id UUID] [--debug]
 ```
 
-#### 출력
-- 텍스트: `<name>\t<description>` 또는 name-only line
-- JSON: tool object 배열 그대로
+#### Output
+- Text: `<name>\t<description>` or name-only lines
+- JSON: raw tool object array
 
-#### 종료 코드
-- 성공 `0`
-- 실패 `1`
+#### Exit codes
+- success `0`
+- failure `1`
 
 ### 6.9 `tool inspect`
-#### 사용법
+#### Usage
 ```bash
 xcodecli tool inspect <name> [--json] [--timeout 60s] [--xcode-pid PID] [--session-id UUID] [--debug]
 ```
 
-#### 텍스트 출력
+#### Text output
 ```text
 name: <tool>
 description: <desc>
@@ -513,34 +513,34 @@ inputSchema:
 <pretty JSON>
 ```
 
-#### JSON 출력
-- tool object 전체
+#### JSON output
+- Full tool object
 
 ### 6.10 `tool call`
-#### 사용법
+#### Usage
 ```bash
 xcodecli tool call <name> (--json '{...}' | --json @payload.json | --json-stdin) [--timeout DURATION] [--xcode-pid PID] [--session-id UUID] [--debug]
 ```
 
-#### 입력 제약
-- payload source는 정확히 1개만 허용
-- payload는 반드시 JSON object
+#### Input constraints
+- Exactly one payload source is allowed
+- Payload must be a JSON object
 
-#### 기본 timeout 정책
-- 60s: list/read/search/log 계열
-- 120s: update/write/refresh 계열
+#### Default timeout policy
+- 60s: list/read/search/log tools
+- 120s: update/write/refresh tools
 - 30m: `BuildProject`, `RunAllTests`, `RunSomeTests`
-- 5m: 기타 tool
+- 5m: all other tools
 
-#### 출력
-- 항상 JSON result object
-- `result.IsError == true`면 exit code `1`
+#### Output
+- Always writes a JSON result object
+- Exit code becomes `1` when `result.IsError == true`
 
 ### 6.11 `agent guide`
-#### 목적
-요청을 workflow family로 분류하고 라이브 컨텍스트를 반영한 next command를 제안
+#### Purpose
+Classify a user request into a workflow family and produce next commands using live context
 
-#### workflow families
+#### Workflow families
 - `catalog`
 - `build`
 - `test`
@@ -549,13 +549,13 @@ xcodecli tool call <name> (--json '{...}' | --json @payload.json | --json-stdin)
 - `edit`
 - `diagnose`
 
-#### 수집 데이터
+#### Collected inputs
 - doctor report
 - agent status
 - tool catalog
 - `XcodeListWindows`
 
-#### JSON 출력
+#### JSON output
 `agentGuideReport`
 ```json
 {
@@ -569,26 +569,26 @@ xcodecli tool call <name> (--json '{...}' | --json @payload.json | --json-stdin)
 ```
 
 ### 6.12 `agent demo`
-#### 목적
-첫 사용자를 위한 safe onboarding demo
+#### Purpose
+Safe onboarding demo for first-time use
 
-#### 내부 동작
+#### Internal actions
 - doctor
 - tools list
 - agent status
-- `XcodeListWindows` safe call
+- safe `XcodeListWindows` call
 
-#### 성공 조건
+#### Success condition
 - doctor success
 - tools list success
 - windows demo attempted
 - windows demo ok
 
 ### 6.13 `agent status`
-#### 목적
-LaunchAgent 설치/실행/세션 상태 확인
+#### Purpose
+Inspect LaunchAgent installation / runtime / session state
 
-#### JSON 출력 스키마
+#### JSON output schema
 `agent.Status`
 ```json
 {
@@ -608,29 +608,29 @@ LaunchAgent 설치/실행/세션 상태 확인
 ```
 
 ### 6.14 `agent stop`
-- stop RPC 전송
-- 출력: `stopped LaunchAgent process if it was running`
+- Send stop RPC
+- Output: `stopped LaunchAgent process if it was running`
 
 ### 6.15 `agent uninstall`
-- plist/socket/pid/log/support dir 제거
-- 출력: `removed LaunchAgent plist and local agent runtime files`
+- Remove plist/socket/pid/log/support dir
+- Output: `removed LaunchAgent plist and local agent runtime files`
 
 ### 6.16 `agent run`
-- 내부 전용 entrypoint
-- `--launch-agent` 필수
-- `--idle-timeout` 기본 `24h`
+- Internal-only entrypoint
+- Requires `--launch-agent`
+- Default `--idle-timeout` is `24h`
 
 ---
 
-## 7. 내부 RPC 및 MCP 프로토콜
+## 7. Internal RPC and MCP Protocol
 
 ### 7.1 Local agent RPC
-전송 매체:
+Transport:
 - Unix domain socket
-- request/response 모두 newline-delimited JSON
-- connection당 request 1개
+- Request/response are newline-delimited JSON
+- One request per connection
 
-#### request schema
+#### Request schema
 ```json
 {
   "method": "tools/call",
@@ -644,14 +644,14 @@ LaunchAgent 설치/실행/세션 상태 확인
 }
 ```
 
-#### methods
+#### Methods
 - `ping`
 - `status`
 - `stop`
 - `tools/list`
 - `tools/call`
 
-#### response schema
+#### Response schema
 ```json
 {
   "error": "...",
@@ -687,26 +687,26 @@ LaunchAgent 설치/실행/세션 상태 확인
 ```
 
 #### tools/list
-- pagination(`nextCursor`)를 따라 끝까지 이어 붙임
+- Follows pagination until `nextCursor` is empty
 
 #### tools/call
 ```json
 {"name":"BuildProject","arguments":{...}}
 ```
 
-#### unsupported server request
-- client는 server-initiated request를 지원하지 않음
-- `Method not found` error 반환 후 실패
+#### Unsupported server request behavior
+- The client does not support server-initiated requests
+- Returns `Method not found` and fails the call
 
 ### 7.3 MCP stdio server
-#### supported methods
+#### Supported methods
 - `initialize`
 - `notifications/initialized`
 - `notifications/cancelled`
 - `tools/list`
 - `tools/call`
 
-#### unsupported version response 예
+#### Unsupported version response example
 ```json
 {
   "jsonrpc":"2.0",
@@ -722,137 +722,137 @@ LaunchAgent 설치/실행/세션 상태 확인
 }
 ```
 
-#### duplicate request id
+#### Duplicate request IDs
 - `-32600` / `request id is already in progress`
 
 ---
 
-## 8. timeout / cancellation 규칙
+## 8. Timeout and Cancellation Rules
 
-### 8.1 request timeout 의미
-`--timeout`이 커버하는 범위:
+### 8.1 Meaning of request timeout
+`--timeout` covers:
 - LaunchAgent startup
 - MCP session initialization
-- auth prompt 대기
+- Authentication prompt wait time
 
-### 8.2 idle timeout
-- pooled `mcpbridge` session idle timeout 기본값: `24h`
-- active request는 idle timeout으로 끊기지 않음
+### 8.2 Idle timeout
+- Default pooled `mcpbridge` session idle timeout: `24h`
+- Active requests are not interrupted by the idle timeout
 
-### 8.3 `serve` 취소 규칙
-- `notifications/cancelled` 수신 시 request id 기반 cancel
-- in-flight request context 취소
-- 취소된 request는 완료되어도 응답 suppression
-- stdin EOF 시 in-flight request 전체 취소
+### 8.3 `serve` cancellation
+- `notifications/cancelled` cancels in-flight requests by request ID
+- Cancels the in-flight request context
+- Suppresses responses for requests that were cancelled
+- EOF on stdin cancels all in-flight requests
 
-### 8.4 `agent` 취소 규칙
-- client context cancel → socket deadline 강제 → read/write 탈출
-- server connection close 감지 → request context cancel
-- long-running request cancel 시 pooled session abort 가능
+### 8.4 `agent` cancellation
+- Client context cancellation forces socket deadline expiry so reads/writes unblock
+- Server connection close cancels the request context
+- Cancelling a long-running request may abort the pooled session to avoid stale work accumulation
 
 ---
 
-## 9. 빌드 / 설치 / 릴리스 / 운영
+## 9. Build / Install / Release / Operations
 
-### 9.1 빌드
-- script: `scripts/build.sh`
-- package: `./cmd/xcodecli`
+### 9.1 Build
+- Script: `scripts/build.sh`
+- Package: `./cmd/xcodecli`
 - ldflags:
   - `-X main.cliVersion=<VERSION>`
   - `-X main.cliBuildChannel=<BUILD_CHANNEL>`
 
-### 9.2 설치
+### 9.2 Install
 #### Homebrew
 ```bash
 brew tap oozoofrog/tap
 brew install oozoofrog/tap/xcodecli
 ```
 
-#### GitHub 직접 설치
+#### Direct GitHub install
 ```bash
 curl -fsSL https://raw.githubusercontent.com/oozoofrog/xcodecli/main/scripts/install.sh | bash
 curl -fsSL https://raw.githubusercontent.com/oozoofrog/xcodecli/main/scripts/install.sh | bash -s -- --ref v0.5.0
 ```
 
-#### 로컬 checkout 설치
+#### Local checkout install
 ```bash
 ./scripts/install.sh
 ./scripts/install.sh --bin-dir "$HOME/.local/bin"
 ```
 
-### 9.3 `scripts/install.sh` 동작
-- 로컬 checkout이면 현재 tree 빌드
-- checkout 밖이면 GitHub ref tarball 다운로드 후 빌드
-- 기본 설치 경로: `$HOME/.local/bin`
-- 설치 후 실행 검증
-- 셸 PATH 도달성 검증 및 안내 출력
+### 9.3 `scripts/install.sh` behavior
+- If run from a local checkout, build the current tree
+- If run outside a checkout, download the GitHub ref tarball and build it
+- Default install path: `$HOME/.local/bin`
+- Validate that the installed binary runs
+- Check login-shell PATH reachability and print shell-specific guidance
 
-### 9.4 릴리스 흐름
-1. `main` merge
-2. local verify (`go test`, build, version)
-3. annotated tag push (`vX.Y.Z`)
-4. GitHub Release draft/publish
-5. `release.published` → Homebrew workflow
+### 9.4 Release flow
+1. Merge into `main`
+2. Run local verification (`go test`, build, version)
+3. Push an annotated tag (`vX.Y.Z`)
+4. Create/publish a GitHub Release
+5. `release.published` triggers the Homebrew workflow
 
 ### 9.5 Homebrew
-- tap repo: `oozoofrog/homebrew-tap`
-- 작업 대상: `Formula/xcodecli.rb` 한 파일만
-- script: `scripts/release_homebrew.sh`
-- 작업:
-  - tag tarball download
-  - sha256 계산
-  - formula 생성/갱신
+- Tap repo: `oozoofrog/homebrew-tap`
+- Only `Formula/xcodecli.rb` may be modified
+- Script: `scripts/release_homebrew.sh`
+- Operations:
+  - download tag tarball
+  - compute sha256
+  - generate/update formula
   - `brew audit --strict`
   - `brew install --build-from-source`
   - smoke test + `brew test`
-  - dry-run / local commit / push 지원
+  - support dry-run / local commit / push
 
 ### 9.6 CI
 #### `.github/workflows/ci.yml`
-트리거:
-- push `main`
-- push `codex/**`
-- PR
+Triggers:
+- push to `main`
+- push to `codex/**`
+- pull requests
 
-작업:
+Jobs:
 - gofmt check
 - `go test ./...`
 - `./scripts/build.sh .tmp/xcodecli`
 
 #### `.github/workflows/homebrew-release.yml`
-트리거:
+Triggers:
 - `release.published`
 - `workflow_dispatch`
 
-필수 secret:
+Required secret:
 - `HOMEBREW_TAP_GITHUB_TOKEN`
 
 ---
 
-## 10. 포팅 체크리스트
+## 10. Porting Checklist
 
-다른 언어로 재구현 시 반드시 유지해야 할 것:
-1. macOS-only gate
-2. bridge/serve/tools/tool/agent 명령 체계
-3. stdout protocol-only 규칙 (`bridge`, `serve`)
-4. session-id precedence 및 persistent file semantics
-5. LaunchAgent 경로/label/layout
-6. local Unix socket RPC schema와 method set
-7. MCP initialize/tools/list/tools/call 계약
-8. tool timeout 기본 분류표
-9. `mcp config` client별 command generation 규칙
-10. doctor / agent guide / agent demo / agent status JSON shape
-11. build/install/release/Homebrew/CI 운영 흐름
+Any reimplementation must preserve at least the following:
+1. macOS-only platform gate
+2. The bridge / serve / tools / tool / agent command model
+3. Protocol-only stdout rules for `bridge` and `serve`
+4. Session-ID precedence and persistent file semantics
+5. LaunchAgent label/path/layout
+6. Local Unix socket RPC schema and method set
+7. MCP initialize / tools/list / tools/call contracts
+8. Default tool timeout categories
+9. `mcp config` client-specific command generation rules
+10. doctor / agent guide / agent demo / agent status JSON shapes
+11. Build / install / release / Homebrew / CI operational flow
 
 ---
 
-## 11. 권장 포트 구조
+## 11. Recommended Port Structure
 - `bridge`
-  - env resolution
+  - environment resolution
   - session persistence
   - raw child-process passthrough
 - `agent`
-  - LaunchAgent equivalent lifecycle
+  - LaunchAgent-equivalent lifecycle
   - local RPC server/client
   - pooled backend session manager
 - `mcp`
@@ -864,4 +864,4 @@ curl -fsSL https://raw.githubusercontent.com/oozoofrog/xcodecli/main/scripts/ins
   - help text
   - text/JSON rendering
 
-이 모듈 구분은 현재 구현의 결합 구조, 테스트 구조, 운영 구조와 가장 잘 맞는다.
+This modular split best matches the current implementation’s coupling, tests, and operational structure.
