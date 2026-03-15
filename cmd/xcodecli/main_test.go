@@ -463,7 +463,9 @@ func TestRunServePassesAgentRequestContextToHandlers(t *testing.T) {
 
 		var stdout strings.Builder
 		var stderr strings.Builder
-		env := append(os.Environ(), "DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer")
+		env := []string{
+			"DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer",
+		}
 		code := run(context.Background(), []string{"serve", "--debug"}, strings.NewReader(""), &stdout, &stderr, env)
 		if code != 0 {
 			t.Fatalf("exit code = %d, want 0 (stderr=%q)", code, stderr.String())
@@ -473,13 +475,18 @@ func TestRunServePassesAgentRequestContextToHandlers(t *testing.T) {
 
 func TestRunServeReportsServerError(t *testing.T) {
 	withStubs(t, func() {
+		oldSessionPathFunc := defaultSessionPathFunc
+		sessionPath := filepath.Join(t.TempDir(), "session-id")
+		defaultSessionPathFunc = func() (string, error) { return sessionPath, nil }
+		defer func() { defaultSessionPathFunc = oldSessionPathFunc }()
+
 		defaultMCPServeFunc = func(ctx context.Context, cfg mcp.ServerConfig, handler mcp.ServerHandler) error {
 			return errors.New("serve failed")
 		}
 
 		var stdout strings.Builder
 		var stderr strings.Builder
-		code := run(context.Background(), []string{"serve"}, strings.NewReader(""), &stdout, &stderr, os.Environ())
+		code := run(context.Background(), []string{"serve"}, strings.NewReader(""), &stdout, &stderr, nil)
 		if code != 1 {
 			t.Fatalf("exit code = %d, want 1", code)
 		}
