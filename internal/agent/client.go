@@ -153,7 +153,11 @@ func Uninstall(ctx context.Context, cfg Config) error {
 }
 
 func doWithAutostart(ctx context.Context, cfg Config, req rpcRequest) (rpcResponse, error) {
-	resp, err := doRPC(ctx, cfg, req)
+	effectiveReq, err := requestWithRemainingTimeout(ctx, req)
+	if err != nil {
+		return rpcResponse{}, requestTimeoutError(req.TimeoutMS, requestTimeoutAction(req.Method, req.ToolName), err)
+	}
+	resp, err := doRPC(ctx, cfg, effectiveReq)
 	if err == nil {
 		return resp, nil
 	}
@@ -169,7 +173,11 @@ func doWithAutostart(ctx context.Context, cfg Config, req rpcRequest) (rpcRespon
 		}
 		return rpcResponse{}, err
 	}
-	resp, err = doRPC(ctx, cfg, req)
+	effectiveReq, err = requestWithRemainingTimeout(ctx, req)
+	if err != nil {
+		return rpcResponse{}, requestTimeoutError(req.TimeoutMS, requestTimeoutAction(req.Method, req.ToolName), err)
+	}
+	resp, err = doRPC(ctx, cfg, effectiveReq)
 	if err != nil {
 		var serverErr serverResponseError
 		if errors.As(err, &serverErr) {

@@ -127,6 +127,19 @@ func TestParseCLIToolInspectCustomTimeout(t *testing.T) {
 	}
 }
 
+func TestParseCLIToolInspectCustomTimeoutBeforeName(t *testing.T) {
+	cfg, _, err := parseCLI([]string{"tool", "inspect", "--timeout", "75s", "BuildProject"})
+	if err != nil {
+		t.Fatalf("parseCLI returned error: %v", err)
+	}
+	if cfg.ToolName != "BuildProject" {
+		t.Fatalf("tool name = %q, want BuildProject", cfg.ToolName)
+	}
+	if cfg.Timeout != 75*time.Second {
+		t.Fatalf("timeout = %s, want 75s", cfg.Timeout)
+	}
+}
+
 func TestParseCLIToolCallInlineJSON(t *testing.T) {
 	cfg, _, err := parseCLI([]string{"tool", "call", "build_sim", "--json", `{"scheme":"Demo"}`, "--timeout", "15s"})
 	if err != nil {

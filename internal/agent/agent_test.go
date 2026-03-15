@@ -161,6 +161,76 @@ func TestCallToolTimeoutIncludesRequestTimeoutMessage(t *testing.T) {
 	}
 }
 
+func TestListToolsAutostartUsesRemainingTimeoutBudget(t *testing.T) {
+	_, paths := newShortPaths(t)
+	started := time.Now()
+	readyAfter := 150 * time.Millisecond
+	reqTimeout := 300 * time.Millisecond
+
+	var mu sync.Mutex
+	seenTimeoutMS := int64(0)
+
+	cfg := Config{
+		Paths:       paths,
+		Label:       LaunchAgentLabel,
+		IdleTimeout: 5 * time.Second,
+		ErrOut:      io.Discard,
+		Launchd:     bootstrapLaunchd{},
+		ExecutablePath: func() (string, error) {
+			return "/tmp/xcodecli-test", nil
+		},
+		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+			if time.Since(started) < readyAfter {
+				return nil, fmt.Errorf("connect to agent socket %s: no such file or directory", address)
+			}
+
+			client, server := net.Pipe()
+			go func() {
+				defer server.Close()
+				line, err := bufio.NewReader(server).ReadBytes('\n')
+				if err != nil {
+					return
+				}
+
+				var req rpcRequest
+				if err := json.Unmarshal(bytesTrimSpace(line), &req); err != nil {
+					t.Errorf("decode request: %v", err)
+					return
+				}
+
+				switch req.Method {
+				case "ping":
+					_, _ = server.Write([]byte(`{"status":{"pid":1,"idleTimeoutMs":86400000,"backendSessions":1}}` + "\n"))
+				case "tools/list":
+					mu.Lock()
+					seenTimeoutMS = req.TimeoutMS
+					mu.Unlock()
+					_, _ = server.Write([]byte(`{"tools":[]}` + "\n"))
+				default:
+					t.Errorf("unexpected method %q", req.Method)
+				}
+			}()
+			return client, nil
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), reqTimeout)
+	defer cancel()
+
+	if _, err := ListTools(ctx, cfg, Request{Timeout: reqTimeout}); err != nil {
+		t.Fatalf("ListTools returned error: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if seenTimeoutMS <= 0 {
+		t.Fatalf("captured timeout = %d, want > 0", seenTimeoutMS)
+	}
+	if seenTimeoutMS >= reqTimeout.Milliseconds() {
+		t.Fatalf("captured timeout = %dms, want less than original %dms after autostart", seenTimeoutMS, reqTimeout.Milliseconds())
+	}
+}
+
 func TestWaitForReadyHonorsShortCallerDeadline(t *testing.T) {
 	started := time.Now()
 	cfg := Config{
@@ -301,6 +371,8 @@ type fakeLaunchd struct {
 
 type blockingLaunchd struct{}
 
+type bootstrapLaunchd struct{}
+
 func (blockingLaunchd) Print(ctx context.Context, target string) (string, error) {
 	return "", fmt.Errorf("service %s not loaded", target)
 }
@@ -316,6 +388,22 @@ func (blockingLaunchd) Kickstart(ctx context.Context, serviceTarget string) erro
 }
 
 func (blockingLaunchd) Bootout(ctx context.Context, target string) error {
+	return nil
+}
+
+func (bootstrapLaunchd) Print(ctx context.Context, target string) (string, error) {
+	return "", fmt.Errorf("service %s not loaded", target)
+}
+
+func (bootstrapLaunchd) Bootstrap(ctx context.Context, domainTarget, plistPath string) error {
+	return nil
+}
+
+func (bootstrapLaunchd) Kickstart(ctx context.Context, serviceTarget string) error {
+	return nil
+}
+
+func (bootstrapLaunchd) Bootout(ctx context.Context, target string) error {
 	return nil
 }
 

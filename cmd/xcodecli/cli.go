@@ -623,7 +623,7 @@ func toolCallFlagTakesValue(flagName string) bool {
 
 func toolInspectFlagTakesValue(flagName string) bool {
 	switch flagName {
-	case "--xcode-pid", "--session-id":
+	case "--xcode-pid", "--session-id", "--timeout":
 		return true
 	default:
 		return false

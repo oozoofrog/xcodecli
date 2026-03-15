@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"fmt"
 	"time"
 )
@@ -44,4 +45,24 @@ func requestTimeoutAction(method, toolName string) string {
 	default:
 		return "waiting for request completion"
 	}
+}
+
+func requestWithRemainingTimeout(ctx context.Context, req rpcRequest) (rpcRequest, error) {
+	if deadline, ok := ctx.Deadline(); ok {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			if err := ctx.Err(); err != nil {
+				return rpcRequest{}, err
+			}
+			return rpcRequest{}, context.DeadlineExceeded
+		}
+		remainingMS := remaining.Milliseconds()
+		if remainingMS == 0 {
+			remainingMS = 1
+		}
+		if req.TimeoutMS <= 0 || remainingMS < req.TimeoutMS {
+			req.TimeoutMS = remainingMS
+		}
+	}
+	return req, nil
 }
