@@ -162,8 +162,8 @@ func TestServeStdioRejectsUnsupportedInitializeVersion(t *testing.T) {
 		t.Fatalf("requested = %#v, want 2099-01-01", data["requested"])
 	}
 	supported := data["supported"].([]any)
-	if len(supported) != 4 {
-		t.Fatalf("len(supported) = %d, want 4", len(supported))
+	if len(supported) != len(supportedProtocolVersions) {
+		t.Fatalf("len(supported) = %d, want %d", len(supported), len(supportedProtocolVersions))
 	}
 
 	_ = inWriter.Close()
