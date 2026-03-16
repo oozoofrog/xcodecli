@@ -147,6 +147,8 @@ func (s *stdioServer) handleEnvelope(env rpcEnvelope) error {
 	switch env.Method {
 	case "initialize":
 		return s.writeResponse(s.initializeResponse(env))
+	case "ping":
+		return s.writeResponse(successResponse(env.ID, map[string]any{}))
 	case "tools/list", "tools/call":
 		return s.startAsyncRequest(env)
 	default:

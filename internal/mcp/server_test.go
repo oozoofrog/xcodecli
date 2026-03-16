@@ -162,8 +162,8 @@ func TestServeStdioRejectsUnsupportedInitializeVersion(t *testing.T) {
 		t.Fatalf("requested = %#v, want 2099-01-01", data["requested"])
 	}
 	supported := data["supported"].([]any)
-	if len(supported) != 3 {
-		t.Fatalf("len(supported) = %d, want 3", len(supported))
+	if len(supported) != 4 {
+		t.Fatalf("len(supported) = %d, want 4", len(supported))
 	}
 
 	_ = inWriter.Close()
@@ -491,6 +491,43 @@ func TestServeStdioHandlesMultipleRequestsAfterCancellation(t *testing.T) {
 	}
 	if line != "" {
 		t.Fatalf("unexpected extra response after sequential requests: %q", line)
+	}
+}
+
+func TestServeStdioPingReturnsEmptyResult(t *testing.T) {
+	inReader, inWriter := io.Pipe()
+	outReader, outWriter := io.Pipe()
+	defer inWriter.Close()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- ServeStdio(context.Background(), ServerConfig{
+			In:  inReader,
+			Out: outWriter,
+		}, ServerHandler{
+			ListTools: func(ctx context.Context) ([]map[string]any, error) { return nil, nil },
+			CallTool: func(ctx context.Context, name string, arguments map[string]any) (CallResult, error) {
+				return CallResult{}, nil
+			},
+		})
+		_ = outWriter.Close()
+	}()
+
+	reader := bufio.NewReader(outReader)
+	writeServerRequest(t, inWriter, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "ping",
+	})
+	resp := readServerResponse(t, reader)
+	result := decodeObjectValue(t, resp["result"])
+	if len(result) != 0 {
+		t.Fatalf("ping result = %+v, want empty object", result)
+	}
+
+	_ = inWriter.Close()
+	if err := <-errCh; err != nil {
+		t.Fatalf("ServeStdio returned error: %v", err)
 	}
 }
 
