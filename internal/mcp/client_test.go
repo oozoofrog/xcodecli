@@ -163,20 +163,20 @@ func TestHelperProcess(t *testing.T) {
 
 	switch mode {
 	case "list-paged":
-		server.expectInitialize("2025-06-18")
+		server.expectInitialize(requestProtocolVersion)
 		server.expectInitialized()
 		server.expectToolsList(2, "")
 		server.write(map[string]any{"jsonrpc": "2.0", "id": 2, "result": map[string]any{"tools": []map[string]any{{"name": "build_sim", "description": "Build for simulator"}, {"name": "test_sim"}}, "nextCursor": "page-2"}})
 		server.expectToolsList(3, "page-2")
 		server.write(map[string]any{"jsonrpc": "2.0", "id": 3, "result": map[string]any{"tools": []map[string]any{{"name": "launch_app_sim", "description": "Launch app"}}}})
 	case "call-success":
-		server.expectInitialize("2025-06-18")
+		server.expectInitialize(requestProtocolVersion)
 		server.expectInitialized()
 		request := server.expectRequest(2, "tools/call")
 		params := decodeObject(t, request["params"])
 		server.write(map[string]any{"jsonrpc": "2.0", "id": 2, "result": map[string]any{"content": []map[string]any{{"type": "text", "text": "ok"}}, "echoName": params["name"], "echoArguments": params["arguments"]}})
 	case "call-is-error":
-		server.expectInitialize("2025-06-18")
+		server.expectInitialize(requestProtocolVersion)
 		server.expectInitialized()
 		server.expectRequest(2, "tools/call")
 		server.write(map[string]any{"jsonrpc": "2.0", "id": 2, "result": map[string]any{"isError": true, "content": []map[string]any{{"type": "text", "text": "failed"}}}})
@@ -184,7 +184,7 @@ func TestHelperProcess(t *testing.T) {
 		server.expectRequest(1, "initialize")
 		server.write(map[string]any{"jsonrpc": "2.0", "id": 1, "result": map[string]any{"protocolVersion": "2099-01-01"}})
 	case "server-request":
-		server.expectInitialize("2025-06-18")
+		server.expectInitialize(requestProtocolVersion)
 		server.expectInitialized()
 		server.expectToolsList(2, "")
 		server.write(map[string]any{"jsonrpc": "2.0", "id": 99, "method": "ping", "params": map[string]any{}})
@@ -194,19 +194,19 @@ func TestHelperProcess(t *testing.T) {
 			t.Fatalf("method not found code = %d, want -32601", code)
 		}
 	case "timeout":
-		server.expectInitialize("2025-06-18")
+		server.expectInitialize(requestProtocolVersion)
 		server.expectInitialized()
 		server.expectToolsList(2, "")
 		time.Sleep(2 * time.Second)
 	case "timeout-init":
 		time.Sleep(2 * time.Second)
 	case "bad-json":
-		server.expectInitialize("2025-06-18")
+		server.expectInitialize(requestProtocolVersion)
 		server.expectInitialized()
 		server.expectToolsList(2, "")
 		fmt.Fprintln(os.Stdout, "{bad-json")
 	case "list-with-notification":
-		server.expectInitialize("2025-06-18")
+		server.expectInitialize(requestProtocolVersion)
 		server.expectInitialized()
 		server.expectToolsList(2, "")
 		server.write(map[string]any{"jsonrpc": "2.0", "method": "notifications/tools/list_changed", "params": map[string]any{"reason": "refresh"}})
