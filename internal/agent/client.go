@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -174,19 +175,9 @@ func doWithAutostart(ctx context.Context, cfg Config, req rpcRequest) (rpcRespon
 		}
 		resp, err := doRPC(ctx, cfg, effectiveReq)
 		if err != nil {
-			var serverErr serverResponseError
-			if errors.As(err, &serverErr) {
-				return rpcResponse{}, err
-			}
-			if ctx.Err() != nil {
-				var unavailable unavailableError
-				if errors.As(err, &unavailable) && unavailable.stage == "connect" {
-					return rpcResponse{}, requestTimeoutError(effectiveReq.TimeoutMS, "connecting to the LaunchAgent after startup", ctx.Err())
-				}
-				return rpcResponse{}, requestTimeoutError(effectiveReq.TimeoutMS, requestTimeoutAction(req.Method, req.ToolName), ctx.Err())
-			}
+			return rpcResponse{}, handleRPCError(ctx, err, effectiveReq, req)
 		}
-		return resp, err
+		return resp, nil
 	}
 
 	effectiveReq, err := requestWithRemainingTimeout(ctx, req)
@@ -230,19 +221,24 @@ func doWithAutostart(ctx context.Context, cfg Config, req rpcRequest) (rpcRespon
 	}
 	resp, err = doRPC(ctx, cfg, effectiveReq)
 	if err != nil {
-		var serverErr serverResponseError
-		if errors.As(err, &serverErr) {
-			return rpcResponse{}, err
-		}
-		if ctx.Err() != nil {
-			var unavailable unavailableError
-			if errors.As(err, &unavailable) && unavailable.stage == "connect" {
-				return rpcResponse{}, requestTimeoutError(effectiveReq.TimeoutMS, "connecting to the LaunchAgent after startup", ctx.Err())
-			}
-			return rpcResponse{}, requestTimeoutError(effectiveReq.TimeoutMS, requestTimeoutAction(req.Method, req.ToolName), ctx.Err())
-		}
+		return rpcResponse{}, handleRPCError(ctx, err, effectiveReq, req)
 	}
-	return resp, err
+	return resp, nil
+}
+
+func handleRPCError(ctx context.Context, err error, effectiveReq, origReq rpcRequest) error {
+	var serverErr serverResponseError
+	if errors.As(err, &serverErr) {
+		return err
+	}
+	if ctx.Err() != nil {
+		var unavailable unavailableError
+		if errors.As(err, &unavailable) && unavailable.stage == "connect" {
+			return requestTimeoutError(effectiveReq.TimeoutMS, "connecting to the LaunchAgent after startup", ctx.Err())
+		}
+		return requestTimeoutError(effectiveReq.TimeoutMS, requestTimeoutAction(origReq.Method, origReq.ToolName), ctx.Err())
+	}
+	return err
 }
 
 func launchAgentBinaryMismatch(cfg Config) (bool, string) {
@@ -312,7 +308,7 @@ func doRPC(ctx context.Context, cfg Config, req rpcRequest) (rpcResponse, error)
 		}
 		return rpcResponse{}, fmt.Errorf("read agent response: %w", err)
 	}
-	line = bytesTrimSpace(line)
+	line = bytes.TrimSpace(line)
 	var resp rpcResponse
 	if err := json.Unmarshal(line, &resp); err != nil {
 		return rpcResponse{}, fmt.Errorf("decode agent response: %w", err)
@@ -411,18 +407,4 @@ func isUnavailable(err error) bool {
 	}
 	text := err.Error()
 	return strings.Contains(text, "no such file or directory") || strings.Contains(text, "connection refused")
-}
-
-func bytesTrimSpace(data []byte) []byte {
-	for len(data) > 0 && (data[0] == ' ' || data[0] == '\n' || data[0] == '\r' || data[0] == '\t') {
-		data = data[1:]
-	}
-	for len(data) > 0 {
-		last := data[len(data)-1]
-		if last != ' ' && last != '\n' && last != '\r' && last != '\t' {
-			break
-		}
-		data = data[:len(data)-1]
-	}
-	return data
 }

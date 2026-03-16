@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -135,7 +136,7 @@ func (s *server) handleConn(conn net.Conn) {
 		return
 	}
 	var req rpcRequest
-	if err := json.Unmarshal(bytesTrimSpace(line), &req); err != nil {
+	if err := json.Unmarshal(bytes.TrimSpace(line), &req); err != nil {
 		s.writeResponse(conn, rpcResponse{Error: fmt.Sprintf("decode agent request: %v", err)})
 		return
 	}
@@ -178,6 +179,28 @@ func (s *server) dispatch(ctx context.Context, req rpcRequest) rpcResponse {
 }
 
 func (s *server) listTools(parentCtx context.Context, req rpcRequest) ([]map[string]any, error) {
+	result, err := s.runSessionOp(parentCtx, req, func(client sessionClient) (any, error) {
+		return client.ListTools()
+	})
+	if err != nil {
+		return nil, err
+	}
+	tools, _ := result.([]map[string]any)
+	return tools, nil
+}
+
+func (s *server) callTool(parentCtx context.Context, req rpcRequest) (mcp.CallResult, error) {
+	result, err := s.runSessionOp(parentCtx, req, func(client sessionClient) (any, error) {
+		return client.CallTool(req.ToolName, req.Arguments)
+	})
+	if err != nil {
+		return mcp.CallResult{}, err
+	}
+	cr, _ := result.(mcp.CallResult)
+	return cr, nil
+}
+
+func (s *server) runSessionOp(parentCtx context.Context, req rpcRequest, fn func(sessionClient) (any, error)) (any, error) {
 	ctx, cancel := requestContext(parentCtx, req)
 	defer cancel()
 	pooled, retired := s.prepareSession(sessionKeyForRequest(req))
@@ -194,13 +217,13 @@ func (s *server) listTools(parentCtx context.Context, req rpcRequest) ([]map[str
 	}
 
 	type result struct {
-		tools []map[string]any
+		value any
 		err   error
 	}
 	resultCh := make(chan result, 1)
 	go func() {
-		tools, callErr := client.ListTools()
-		resultCh <- result{tools: tools, err: callErr}
+		val, callErr := fn(client)
+		resultCh <- result{value: val, err: callErr}
 	}()
 	select {
 	case res := <-resultCh:
@@ -211,51 +234,10 @@ func (s *server) listTools(parentCtx context.Context, req rpcRequest) ([]map[str
 			}
 			return nil, res.err
 		}
-		return res.tools, nil
+		return res.value, nil
 	case <-ctx.Done():
 		s.discardClientLocked(pooled)
 		return nil, requestTimeoutError(req.TimeoutMS, requestTimeoutAction(req.Method, req.ToolName), ctx.Err())
-	}
-}
-
-func (s *server) callTool(parentCtx context.Context, req rpcRequest) (mcp.CallResult, error) {
-	ctx, cancel := requestContext(parentCtx, req)
-	defer cancel()
-	pooled, retired := s.prepareSession(sessionKeyForRequest(req))
-	s.abortSessionsAsync(retired)
-	pooled.mu.Lock()
-	defer func() {
-		pooled.mu.Unlock()
-		s.finishSession(pooled)
-	}()
-
-	client, err := s.ensureClient(ctx, pooled, req)
-	if err != nil {
-		return mcp.CallResult{}, err
-	}
-
-	type result struct {
-		callResult mcp.CallResult
-		err        error
-	}
-	resultCh := make(chan result, 1)
-	go func() {
-		callResult, callErr := client.CallTool(req.ToolName, req.Arguments)
-		resultCh <- result{callResult: callResult, err: callErr}
-	}()
-	select {
-	case res := <-resultCh:
-		if res.err != nil {
-			s.discardClientLocked(pooled)
-			if ctx.Err() != nil {
-				return mcp.CallResult{}, requestTimeoutError(req.TimeoutMS, requestTimeoutAction(req.Method, req.ToolName), ctx.Err())
-			}
-			return mcp.CallResult{}, res.err
-		}
-		return res.callResult, nil
-	case <-ctx.Done():
-		s.discardClientLocked(pooled)
-		return mcp.CallResult{}, requestTimeoutError(req.TimeoutMS, requestTimeoutAction(req.Method, req.ToolName), ctx.Err())
 	}
 }
 
