@@ -7,6 +7,14 @@
 *.out
 coverage.out
 
+# Swift / SPM
+/.build/
+/.swiftpm/
+Package.resolved
+*.xcodeproj/
+*.xcworkspace/
+xcuserdata/
+
 # local scratch/build dirs
 /.tmp/
 
