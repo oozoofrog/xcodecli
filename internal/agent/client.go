@@ -408,4 +408,3 @@ func isUnavailable(err error) bool {
 	text := err.Error()
 	return strings.Contains(text, "no such file or directory") || strings.Contains(text, "connection refused")
 }
-

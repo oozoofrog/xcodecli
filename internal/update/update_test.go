@@ -10,7 +10,6 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-
 )
 
 func TestParseLatestTagSelectsNewestSemanticVersion(t *testing.T) {
