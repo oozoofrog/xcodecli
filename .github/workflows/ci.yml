@@ -4,29 +4,29 @@ on:
   push:
     branches:
       - main
-      - 'codex/**'
   pull_request:
 
 jobs:
   test:
-    runs-on: macos-latest
+    runs-on: macos-15
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Set up Go
-        uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-          cache-dependency-path: go.mod
-          check-latest: true
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
 
-      - name: Verify formatting
-        run: |
-          test -z "$(gofmt -l .)"
+      - name: Resolve dependencies
+        run: swift package resolve
+
+      - name: Build
+        run: swift build
 
       - name: Run tests
-        run: go test ./...
+        run: swift test
 
-      - name: Build CLI
-        run: ./scripts/build.sh .tmp/xcodecli
+      - name: Release build
+        run: ./scripts/build-swift.sh .tmp/xcodecli
+
+      - name: Verify version output
+        run: .tmp/xcodecli version

@@ -87,21 +87,21 @@ render_formula() {
   local sha256="$2"
   cat <<FORMULA
 class Xcodecli < Formula
-  desc "Go CLI wrapper around xcrun mcpbridge"
+  desc "macOS CLI wrapper around xcrun mcpbridge"
   homepage "https://github.com/${SOURCE_REPO}"
   url "https://github.com/${SOURCE_REPO}/archive/refs/tags/v${version}.tar.gz"
   sha256 "${sha256}"
   license "MIT"
 
-  depends_on "go" => :build
+  depends_on xcode: ["16.0", :build]
+  depends_on :macos
 
   def install
-    system "go", "build", *std_go_args(output: bin/"xcodecli", ldflags: "-s -w -X main.cliVersion=v#{version} -X main.cliBuildChannel=release"), "./cmd/xcodecli"
+    system "swift", "build", "-c", "release", "--disable-sandbox"
+    bin.install ".build/release/xcodecli"
   end
 
   test do
-    output = shell_output("#{bin}/xcodecli help")
-    assert_match "xcodecli wraps xcrun mcpbridge", output
     assert_match "v#{version}", shell_output("#{bin}/xcodecli version")
   end
 end
@@ -223,7 +223,7 @@ else
 fi
 
 log "running formula smoke test"
-"$(brew --prefix)/bin/${FORMULA_NAME}" help >/dev/null
+"$(brew --prefix)/bin/${FORMULA_NAME}" --help >/dev/null
 version_output="$("$(brew --prefix)/bin/${FORMULA_NAME}" version | tr -d '\r')"
 [[ "$version_output" == "${FORMULA_NAME} ${TAG}" ]] || fail "unexpected version output from Homebrew install: ${version_output}"
 brew test "$TAP_NAME/$FORMULA_NAME"
