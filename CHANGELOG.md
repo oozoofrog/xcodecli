@@ -2,9 +2,44 @@
 
 All notable changes to this project will be documented in this file.
 
-The format is inspired by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses pre-1.0 semantic versioning tags.
+The format is inspired by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
+
+## [1.0.0] - 2026-03-21
+### Changed
+- **Complete Go → Swift rewrite.** The entire CLI has been reimplemented as a Swift Package Manager project (swift-tools-version 6.0, macOS 15+). All Go source code is retained as reference but is no longer built or tested by CI.
+- CI workflow replaced: Go CI (`go test`, `gofmt`) removed; Swift CI (`swift build`, `swift test`, release build verification) on macOS 15 runner.
+- Homebrew formula now uses `swift build -c release` with `inreplace` version injection instead of `go build` with ldflags.
+- `install.sh` requires Swift (Xcode) instead of Go.
+- `scripts/build.sh` (Go) removed; `scripts/build-swift.sh` is the sole build script.
+
+### Added
+- **Agent RPC server** (`agent run`): Unix domain socket daemon with session pooling, idle timeout (default 24h), PID file, binary identity tracking, and graceful shutdown via SIGINT/SIGTERM.
+- **Agent RPC client** with autostart: automatic LaunchAgent bootstrap/kickstart, binary mismatch detection and forced restart, `waitForReady` ping loop, and remaining timeout budget management.
+- **MCP server enhancements**: `notifications/cancelled` handler suppresses in-flight responses; duplicate request ID detection returns `-32600`; `tools/list` and `tools/call` dispatched as async Tasks.
+- **MCP config rewrite**: per-client invocation builders for Claude (`add-json` with JSON payload + remove/retry), Codex (`mcp add`), and Gemini (`mcp add`); shell quoting; executable path resolution.
+- **Agent guide**: workflow catalog (build/test/read/search/edit/diagnose), keyword-based intent classification with confidence scoring, 5-tier fuzzy window matching (100/90/80/70/50), per-workflow fallbacks, 15 format command helpers.
+- **Agent demo**: doctor → tools list → agent status → XcodeListWindows onboarding flow with structured JSON/text reports.
+- **Tool-specific timeout policy**: read tools 60s, write tools 120s, build/test 30m, fallback 5m. All `tool call`, `tool inspect`, `tools list`, and `serve` commands route through AgentClient.
+- **LaunchAgent permission diagnostics** (#29): `doctor` now checks `~/Library/LaunchAgents/` directory ownership and plist writability; `ensureLaunchAgentPlist` wraps permission-denied errors with actionable `sudo chown` guidance.
+- **MCP client pagination**: cursor-based `tools/list` loop accumulates tools across pages.
+- **Helper modules**: `SocketHelpers` (safe `sockaddr_un` path setter, partial-write loop), `BinaryIdentity` (SHA-256 executable hashing), `PlistHelper` (XML render/parse/ensure), `LaunchdHelper` (launchctl protocol), `TimeoutPolicy`.
+- **201 tests** across 26 suites (up from 24), recovering ~96% of Go test coverage. Includes MCP server Pipe-based protocol tests, intent classification tests, session pooling integration tests (env-gated), and Swift-specific concurrency tests.
+- Release skill (`.claude/skills/release.md`) for guided version bump and Homebrew deployment.
+
+### Fixed
+- `sockaddr_un.sun_path` now uses a safe `withUnsafeMutableBytes` helper instead of fragile `strncpy` pattern.
+- Idle timeout unit conversion: server sends milliseconds on the wire (`RuntimeStatus.idleTimeoutMs`), client correctly converts to nanoseconds. Previously multiplied by 10^6 too much.
+- `writeResponse` sends a fallback JSON error on encoding failure instead of silently dropping the response.
+- Partial writes handled via `writeAllToFD` loop with EINTR retry.
+- `getOrCreateClient` TOCTOU race fixed with double-check-under-lock pattern.
+- `accept()` loop moved to dedicated Thread to avoid blocking Swift cooperative thread pool.
+- `chmod` and `setsockopt` return values now checked.
+- `readEnvelope` recursion replaced with loop to prevent stack overflow on many empty lines.
+- `MCPClient.request()` loop checks `Task.isCancelled` for cooperative cancellation.
+- `stop()` and `uninstall()` collect errors instead of silently swallowing with `try?`.
+- `MCPResponseWriter` and `AgentServerConfig` use `@unchecked Sendable` for FileHandle fields.
 
 ## [0.5.4] - 2026-03-16
 ### Changed
