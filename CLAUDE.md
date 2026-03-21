@@ -14,8 +14,9 @@
 - For release and Homebrew work, destructive steps come last and dry-run/check steps come first.
 
 ## Core Commands
-- Test: `go test ./...`
-- Build: `./scripts/build.sh .tmp/xcodecli`
+- Test: `swift test`
+- Build: `swift build`
+- Release build: `./scripts/build-swift.sh .tmp/xcodecli`
 - Version check: `./.tmp/xcodecli version`
 - Agent onboarding:
   - `./xcodecli agent guide "<intent>"`
@@ -30,8 +31,8 @@
   - use `./scripts/release_homebrew.sh <tag> --dry-run` before push/publish paths
 
 ## Repository Map
-- `cmd/xcodecli/CONTEXT.md`: CLI surface, output contracts, help/README/test sync rules
-- `internal/CONTEXT.md`: package boundaries for `agent`, `bridge`, `doctor`, and `mcp`
+- `Sources/xcodecli/`: CLI commands (ArgumentParser)
+- `Sources/XcodeCLICore/`: Core library (Agent, Bridge, Doctor, MCP, Shared)
 - `scripts/CONTEXT.md`: build/install/release script responsibilities and safety rules
 - `docs/CONTEXT.md`: canonical user docs vs release docs and example-sync rules
 

@@ -23,7 +23,7 @@ Environment:
 Behavior:
   - When run inside a local checkout and no --ref is provided, builds from the current working tree.
   - When run outside a checkout (for example via curl | bash), downloads the requested GitHub ref and builds from source.
-  - Requires macOS and Go to be installed.
+  - Requires macOS and Xcode (with Swift) to be installed.
 USAGE
 }
 
@@ -232,7 +232,7 @@ done
 
 [[ "$(uname -s)" == "Darwin" ]] || fail "xcodecli only supports macOS"
 
-require_cmd go
+require_cmd swift
 
 SCRIPT_DIR=""
 if SCRIPT_DIR="$(resolve_script_dir)"; then
@@ -244,7 +244,7 @@ if [[ -n "$SCRIPT_DIR" ]]; then
 fi
 
 USE_LOCAL_SOURCE=0
-if [[ -n "$ROOT_DIR" && -f "${ROOT_DIR}/go.mod" && -x "${ROOT_DIR}/scripts/build.sh" && -z "$REF" ]]; then
+if [[ -n "$ROOT_DIR" && -f "${ROOT_DIR}/Package.swift" && -x "${ROOT_DIR}/scripts/build-swift.sh" && -z "$REF" ]]; then
   USE_LOCAL_SOURCE=1
 fi
 
@@ -272,7 +272,7 @@ else
   log "extracting source archive"
   tar -xzf "$TARBALL_PATH" -C "$WORK_DIR"
   BUILD_ROOT="$(find "$WORK_DIR" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
-  [[ -n "$BUILD_ROOT" && -f "${BUILD_ROOT}/go.mod" && -x "${BUILD_ROOT}/scripts/build.sh" ]] || fail "downloaded source archive did not contain the expected project layout"
+  [[ -n "$BUILD_ROOT" && -f "${BUILD_ROOT}/Package.swift" && -x "${BUILD_ROOT}/scripts/build-swift.sh" ]] || fail "downloaded source archive did not contain the expected project layout"
   log "using downloaded source at ${BUILD_ROOT}"
 fi
 
@@ -281,9 +281,9 @@ TEMP_OUTPUT="${WORK_DIR:-${TMPDIR:-/tmp}}/xcodecli"
 rm -f "$TEMP_OUTPUT"
 log "building xcodecli"
 if [[ -n "$REF" && "$REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  env VERSION="$REF" BUILD_CHANNEL=release "${BUILD_ROOT}/scripts/build.sh" "$TEMP_OUTPUT"
+  env VERSION="$REF" BUILD_CHANNEL=release "${BUILD_ROOT}/scripts/build-swift.sh" "$TEMP_OUTPUT"
 else
-  env -u VERSION -u BUILD_CHANNEL "${BUILD_ROOT}/scripts/build.sh" "$TEMP_OUTPUT"
+  env -u VERSION -u BUILD_CHANNEL "${BUILD_ROOT}/scripts/build-swift.sh" "$TEMP_OUTPUT"
 fi
 
 INSTALL_PATH="${INSTALL_BIN_DIR}/xcodecli"
@@ -291,7 +291,7 @@ log "installing to ${INSTALL_PATH}"
 install -m 0755 "$TEMP_OUTPUT" "$INSTALL_PATH"
 
 log "verifying install"
-"${INSTALL_PATH}" help >/dev/null
+"${INSTALL_PATH}" --help >/dev/null
 if version_output="$("${INSTALL_PATH}" version 2>/dev/null)"; then
   log "installed version: ${version_output}"
 fi
