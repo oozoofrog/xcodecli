@@ -315,8 +315,10 @@ struct MCPServerTests {
             "reason": "test cancel",
         ]))
 
-        // Give the server time to process the cancellation notification
-        try await Task.sleep(nanoseconds: 50_000_000) // 50ms
+        // Allow time for the server to read and process the cancellation notification
+        // from the pipe. This is a timing dependency — the server must register the
+        // cancellation before gate.open() releases the handler.
+        try await Task.sleep(nanoseconds: 200_000_000) // 200ms
 
         // Unblock the handler so it can finish (but response should be suppressed)
         gate.open()
@@ -395,12 +397,14 @@ private final class LockedFlag: @unchecked Sendable {
     }
 
     /// Wait until the flag is set. Returns immediately if already set.
+    /// Only one waiter is supported at a time.
     func wait() async {
         let alreadySet = lock.withLock { _value }
         if alreadySet { return }
         await withCheckedContinuation { cont in
             let shouldResume = lock.withLock { () -> Bool in
                 if _value { return true }
+                precondition(continuation == nil, "LockedFlag.wait() called by multiple waiters")
                 continuation = cont
                 return false
             }
@@ -409,21 +413,39 @@ private final class LockedFlag: @unchecked Sendable {
     }
 }
 
-/// A signal that a handler can await, allowing the test to unblock it on demand.
+/// A latch-based signal: open() before wait() is safe (wait returns immediately).
 private final class TestGate: @unchecked Sendable {
     private var continuation: CheckedContinuation<Void, Never>?
+    private var isOpen = false
     private let lock = NSLock()
 
     /// Called by the handler to wait until the test opens the gate.
+    /// Returns immediately if the gate is already open.
+    /// Handles task cancellation by resuming the continuation to avoid leaks.
     func wait() async {
-        await withCheckedContinuation { cont in
-            lock.withLock { continuation = cont }
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { cont in
+                let shouldResume = lock.withLock { () -> Bool in
+                    if isOpen { return true }
+                    continuation = cont
+                    return false
+                }
+                if shouldResume { cont.resume() }
+            }
+        } onCancel: {
+            let cont = lock.withLock { () -> CheckedContinuation<Void, Never>? in
+                let c = continuation
+                continuation = nil
+                return c
+            }
+            cont?.resume()
         }
     }
 
     /// Called by the test to unblock the handler.
     func open() {
         let cont = lock.withLock { () -> CheckedContinuation<Void, Never>? in
+            isOpen = true
             let c = continuation
             continuation = nil
             return c
