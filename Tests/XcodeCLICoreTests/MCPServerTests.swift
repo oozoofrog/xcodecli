@@ -397,18 +397,31 @@ private final class LockedFlag: @unchecked Sendable {
     }
 
     /// Wait until the flag is set. Returns immediately if already set.
-    /// Only one waiter is supported at a time.
+    /// Only one waiter is supported at a time. Safe for cancelled tasks.
     func wait() async {
         let alreadySet = lock.withLock { _value }
         if alreadySet { return }
-        await withCheckedContinuation { cont in
-            let shouldResume = lock.withLock { () -> Bool in
-                if _value { return true }
-                precondition(continuation == nil, "LockedFlag.wait() called by multiple waiters")
-                continuation = cont
-                return false
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { cont in
+                let shouldResume = lock.withLock { () -> Bool in
+                    if _value { return true }
+                    precondition(continuation == nil, "LockedFlag.wait() called by multiple waiters")
+                    continuation = cont
+                    if Task.isCancelled {
+                        continuation = nil
+                        return true
+                    }
+                    return false
+                }
+                if shouldResume { cont.resume() }
             }
-            if shouldResume { cont.resume() }
+        } onCancel: {
+            let cont = lock.withLock { () -> CheckedContinuation<Void, Never>? in
+                let c = continuation
+                continuation = nil
+                return c
+            }
+            cont?.resume()
         }
     }
 }
@@ -490,27 +503,16 @@ struct TestGateTests {
     @Test("pre-cancelled task does not hang in wait")
     func preCancelledTaskDoesNotHang() async {
         let gate = TestGate()
-        let task = Task {
-            // Cancel before calling wait
-            await gate.wait()
-        }
-        task.cancel()
-        // The task should complete promptly (not hang forever)
-        // Use a timeout via withThrowingTaskGroup to detect hangs
-        let completed = await withTaskGroup(of: Bool.self) { group in
-            group.addTask {
-                _ = await task.value
-                return true
-            }
-            group.addTask {
-                try? await Task.sleep(nanoseconds: 2_000_000_000) // 2s timeout
-                return false
-            }
-            let first = await group.next()!
+        // Use cancelAll() before addTask to guarantee child is born cancelled
+        await withTaskGroup(of: Void.self) { group in
             group.cancelAll()
-            return first
+            group.addTask {
+                // This task starts in an already-cancelled state
+                await gate.wait()
+            }
+            // If wait() hangs, the test runner will time out
         }
-        #expect(completed, "pre-cancelled task should not hang in gate.wait()")
+        // Reaching here means gate.wait() returned despite pre-cancellation
     }
 
     @Test("cancellation during wait resumes continuation")
