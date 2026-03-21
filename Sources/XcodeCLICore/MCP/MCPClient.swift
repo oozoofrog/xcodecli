@@ -137,6 +137,7 @@ public actor MCPClient {
 
         // Read responses until we get ours
         while true {
+            try Task.checkCancellation()
             let response = try readEnvelope()
 
             if debug {
@@ -243,28 +244,29 @@ public actor MCPClient {
     private func readEnvelope() throws -> RPCEnvelope {
         let handle = stdoutPipe.fileHandleForReading
 
-        // Read line-by-line from stdout
-        var lineData = Data()
         while true {
-            let byte = handle.readData(ofLength: 1)
-            if byte.isEmpty {
-                throw XcodeCLIError.mcpInitializationFailed(reason: "child process closed stdout")
+            var lineData = Data()
+            while true {
+                let byte = handle.readData(ofLength: 1)
+                if byte.isEmpty {
+                    throw XcodeCLIError.mcpInitializationFailed(reason: "child process closed stdout")
+                }
+                if byte[0] == UInt8(ascii: "\n") {
+                    break
+                }
+                lineData.append(byte)
             }
-            if byte[0] == UInt8(ascii: "\n") {
-                break
+
+            guard let line = String(data: lineData, encoding: .utf8) else {
+                throw XcodeCLIError.mcpRPCError(code: -32700, message: "invalid UTF-8 in response")
             }
-            lineData.append(byte)
-        }
 
-        guard let line = String(data: lineData, encoding: .utf8) else {
-            throw XcodeCLIError.mcpRPCError(code: -32700, message: "invalid UTF-8 in response")
-        }
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty {
+                continue // skip empty lines without recursion
+            }
 
-        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty {
-            return try readEnvelope() // skip empty lines
+            return try JSONLineCodec.decode(trimmed)
         }
-
-        return try JSONLineCodec.decode(trimmed)
     }
 }

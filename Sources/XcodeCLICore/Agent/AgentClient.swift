@@ -63,7 +63,7 @@ public enum AgentClient {
             agentStatus.running = true
             if let status = resp.status {
                 agentStatus.pid = status.pid
-                agentStatus.idleTimeoutNs = status.idleTimeoutNs * 1_000_000 // ms -> ns
+                agentStatus.idleTimeoutNs = status.idleTimeoutMs * 1_000_000 // ms -> ns
                 agentStatus.backendSessions = status.backendSessions
             }
         }
@@ -74,26 +74,35 @@ public enum AgentClient {
     /// Stop the agent.
     public static func stop() async throws {
         let req = AgentRequest(method: "stop")
-        _ = try? await doRPC(req)
+        do {
+            _ = try await doRPC(req)
+        } catch {
+            if !isUnavailableError(error) { throw error }
+        }
     }
 
     /// Uninstall the agent.
     public static func uninstall() async throws {
-        try? await stop()
+        var errors: [String] = []
+        do { try await stop() } catch { errors.append("stop: \(error.localizedDescription)") }
+
         let paths = AgentPaths.defaultPaths()
         let label = AgentPaths.label
-
         let launchd = CommandLaunchd()
-        try? await launchd.bootout(target: launchAgentServiceTarget(label: label))
+        do { try await launchd.bootout(target: launchAgentServiceTarget(label: label)) } catch { errors.append("bootout: \(error.localizedDescription)") }
 
         let fm = FileManager.default
         for path in [paths.plistPath, paths.socketPath, paths.pidPath, paths.logPath] {
             if fm.fileExists(atPath: path) {
-                try? fm.removeItem(atPath: path)
+                do { try fm.removeItem(atPath: path) } catch { errors.append("remove \((path as NSString).lastPathComponent): \(error.localizedDescription)") }
             }
         }
         if fm.fileExists(atPath: paths.supportDir) {
-            try? fm.removeItem(atPath: paths.supportDir)
+            do { try fm.removeItem(atPath: paths.supportDir) } catch { errors.append("remove supportDir: \(error.localizedDescription)") }
+        }
+
+        if !errors.isEmpty {
+            throw XcodeCLIError.agentUnavailable(stage: "uninstall", underlying: errors.joined(separator: "; "))
         }
     }
 
@@ -111,11 +120,7 @@ public enum AgentClient {
 
         var addr = sockaddr_un()
         addr.sun_family = sa_family_t(AF_UNIX)
-        withUnsafeMutablePointer(to: &addr.sun_path) { ptr in
-            socketPath.withCString { cStr in
-                _ = strncpy(UnsafeMutableRawPointer(ptr).assumingMemoryBound(to: CChar.self), cStr, MemoryLayout.size(ofValue: ptr.pointee) - 1)
-            }
-        }
+        setUnixSocketPath(&addr, to: socketPath)
 
         let connectResult = withUnsafePointer(to: &addr) { ptr in
             ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockPtr in
@@ -130,16 +135,17 @@ public enum AgentClient {
             var tv = timeval()
             tv.tv_sec = Int(timeoutMS / 1000)
             tv.tv_usec = Int32((timeoutMS % 1000) * 1000)
-            setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
-            setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
+            if setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size)) != 0 {
+                FileHandle.standardError.write(Data("[warn] setsockopt SO_RCVTIMEO failed: \(String(cString: strerror(errno)))\n".utf8))
+            }
+            if setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size)) != 0 {
+                FileHandle.standardError.write(Data("[warn] setsockopt SO_SNDTIMEO failed: \(String(cString: strerror(errno)))\n".utf8))
+            }
         }
 
         var payload = try JSONEncoder().encode(req)
         payload.append(UInt8(ascii: "\n"))
-        let writeResult = payload.withUnsafeBytes { ptr in
-            Darwin.write(fd, ptr.baseAddress, ptr.count)
-        }
-        guard writeResult > 0 else {
+        guard writeAllToFD(fd, payload) else {
             throw XcodeCLIError.agentUnavailable(stage: "write", underlying: "write agent request failed")
         }
 
@@ -168,10 +174,11 @@ public enum AgentClient {
 
     private static func doWithAutostart(_ req: AgentRequest) async throws -> AgentResponse {
         let paths = AgentPaths.defaultPaths()
+        let startTime = ContinuousClock.now
 
         if let (mismatch, _) = try? launchAgentBinaryMismatch(paths: paths), mismatch {
             try await ensureAgentReady(forceRestart: true)
-            return try await doRPC(req)
+            return try await doRPC(adjustTimeout(req, since: startTime))
         }
 
         do {
@@ -182,7 +189,17 @@ public enum AgentClient {
         }
 
         try await ensureAgentReady(forceRestart: false)
-        return try await doRPC(req)
+        return try await doRPC(adjustTimeout(req, since: startTime))
+    }
+
+    private static func adjustTimeout(_ req: AgentRequest, since startTime: ContinuousClock.Instant) -> AgentRequest {
+        guard let timeoutMS = req.timeoutMS, timeoutMS > 0 else { return req }
+        let elapsed = ContinuousClock.now - startTime
+        let elapsedMS = Int64(elapsed.components.seconds) * 1000 +
+                        Int64(elapsed.components.attoseconds / 1_000_000_000_000_000)
+        var adjusted = req
+        adjusted.timeoutMS = max(timeoutMS - elapsedMS, 1)
+        return adjusted
     }
 
     private static func ensureAgentReady(forceRestart: Bool) async throws {

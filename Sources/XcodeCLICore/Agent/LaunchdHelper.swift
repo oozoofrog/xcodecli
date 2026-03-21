@@ -40,9 +40,9 @@ public struct CommandLaunchd: LaunchdInterface, Sendable {
                 ? result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
                 : result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
             if text.isEmpty {
-                throw XcodeCLIError.bridgeSpawnFailed(underlying: "launchctl \(args.joined(separator: " ")): exit \(result.exitCode)")
+                throw XcodeCLIError.agentUnavailable(stage: "launchctl", underlying: "launchctl \(args.joined(separator: " ")): exit \(result.exitCode)")
             }
-            throw XcodeCLIError.bridgeSpawnFailed(underlying: "launchctl \(args.joined(separator: " ")): \(text)")
+            throw XcodeCLIError.agentUnavailable(stage: "launchctl", underlying: "launchctl \(args.joined(separator: " ")): \(text)")
         }
         return result.stdout
     }

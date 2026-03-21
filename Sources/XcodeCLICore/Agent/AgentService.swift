@@ -38,20 +38,33 @@ public struct AgentRequest: Codable, Sendable {
     }
 }
 
+/// Runtime status from the agent server (wire format, Go-compatible).
+public struct RuntimeStatus: Codable, Sendable {
+    public var pid: Int
+    public var idleTimeoutMs: Int64
+    public var backendSessions: Int
+
+    public init(pid: Int = 0, idleTimeoutMs: Int64 = 0, backendSessions: Int = 0) {
+        self.pid = pid
+        self.idleTimeoutMs = idleTimeoutMs
+        self.backendSessions = backendSessions
+    }
+}
+
 /// Agent RPC response.
 public struct AgentResponse: Codable, Sendable {
     public var tools: [JSONValue]?
     public var result: [String: JSONValue]?
     public var isError: Bool?
     public var error: String?
-    public var status: AgentStatus?
+    public var status: RuntimeStatus?
 
     public init(
         tools: [JSONValue]? = nil,
         result: [String: JSONValue]? = nil,
         isError: Bool? = nil,
         error: String? = nil,
-        status: AgentStatus? = nil
+        status: RuntimeStatus? = nil
     ) {
         self.tools = tools
         self.result = result

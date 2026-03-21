@@ -112,8 +112,7 @@ public func renderLaunchAgentPlist(
     \t<string>\(xmlEscape(paths.logPath))</string>
     </dict>
     </plist>
-
-    """
+    """ + "\n"
 }
 
 private func xmlEscape(_ raw: String) -> String {

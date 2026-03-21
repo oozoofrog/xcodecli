@@ -370,7 +370,7 @@ private func decodeToolCallParams(_ params: JSONValue?) throws -> (String, [Stri
 // MARK: - Response Writer
 
 /// Thread-safe response writer for MCP stdout.
-final class MCPResponseWriter: Sendable {
+final class MCPResponseWriter: @unchecked Sendable {
     private let handle: FileHandle
     private let debug: Bool
     private let errOut: FileHandle

@@ -5,7 +5,7 @@ import Darwin
 
 // MARK: - Server Configuration
 
-public struct AgentServerConfig: Sendable {
+public struct AgentServerConfig: @unchecked Sendable {
     public let paths: AgentPaths.Paths
     public let label: String
     public let idleTimeout: TimeInterval
@@ -52,14 +52,6 @@ private final class PooledSession: @unchecked Sendable {
     }
 }
 
-// MARK: - Runtime Status
-
-struct RuntimeStatus: Codable, Sendable {
-    let pid: Int
-    let idleTimeoutMs: Int64
-    let backendSessions: Int
-}
-
 // MARK: - Agent Server
 
 public final class AgentServer: @unchecked Sendable {
@@ -104,11 +96,7 @@ public final class AgentServer: @unchecked Sendable {
         var addr = sockaddr_un()
         addr.sun_family = sa_family_t(AF_UNIX)
         let socketPath = cfg.paths.socketPath
-        withUnsafeMutablePointer(to: &addr.sun_path) { ptr in
-            socketPath.withCString { cStr in
-                _ = strncpy(UnsafeMutableRawPointer(ptr).assumingMemoryBound(to: CChar.self), cStr, MemoryLayout.size(ofValue: ptr.pointee) - 1)
-            }
-        }
+        setUnixSocketPath(&addr, to: socketPath)
 
         let bindResult = withUnsafePointer(to: &addr) { ptr in
             ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockPtr in
@@ -121,7 +109,10 @@ public final class AgentServer: @unchecked Sendable {
         }
 
         // chmod 0600
-        chmod(socketPath, 0o600)
+        guard chmod(socketPath, 0o600) == 0 else {
+            Darwin.close(fd)
+            throw XcodeCLIError.agentUnavailable(stage: "chmod", underlying: "chmod \(socketPath): \(String(cString: strerror(errno)))")
+        }
 
         guard Darwin.listen(fd, 5) == 0 else {
             Darwin.close(fd)
@@ -140,23 +131,30 @@ public final class AgentServer: @unchecked Sendable {
 
         startIdleTimer()
 
-        // Accept loop
-        while true {
-            let clientFD = Darwin.accept(fd, nil, nil)
-            if clientFD < 0 {
-                if isClosed() { return }
-                if errno == EINTR { continue }
-                if errno == EBADF || errno == EINVAL { return }
-                continue
-            }
-            connectionStarted()
-            Task { [weak self] in
-                guard let self else {
-                    Darwin.close(clientFD)
-                    return
+        // Accept loop on dedicated thread
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            let acceptThread = Thread {
+                defer { continuation.resume() }
+                while true {
+                    let clientFD = Darwin.accept(fd, nil, nil)
+                    if clientFD < 0 {
+                        if self.isClosed() { return }
+                        if errno == EINTR { continue }
+                        if errno == EBADF || errno == EINVAL { return }
+                        continue
+                    }
+                    self.connectionStarted()
+                    Task { [weak self] in
+                        guard let self else {
+                            Darwin.close(clientFD)
+                            return
+                        }
+                        await self.handleConnection(clientFD)
+                    }
                 }
-                await self.handleConnection(clientFD)
             }
+            acceptThread.name = "xcodecli-agent-accept"
+            acceptThread.start()
         }
     }
 
@@ -168,14 +166,19 @@ public final class AgentServer: @unchecked Sendable {
             connectionFinished()
         }
 
-        // Read single line request
-        var data = Data()
-        var buf = [UInt8](repeating: 0, count: 4096)
-        outer: while true {
-            let n = Darwin.read(fd, &buf, buf.count)
-            if n <= 0 { break }
-            data.append(contentsOf: buf[0..<n])
-            if data.contains(UInt8(ascii: "\n")) { break outer }
+        // Read single line request on background queue
+        let data: Data = await withCheckedContinuation { cont in
+            DispatchQueue.global().async {
+                var data = Data()
+                var buf = [UInt8](repeating: 0, count: 4096)
+                outer: while true {
+                    let n = Darwin.read(fd, &buf, buf.count)
+                    if n <= 0 { break }
+                    data.append(contentsOf: buf[0..<n])
+                    if data.contains(UInt8(ascii: "\n")) { break outer }
+                }
+                cont.resume(returning: data)
+            }
         }
 
         guard let lineEnd = data.firstIndex(of: UInt8(ascii: "\n")) else {
@@ -266,11 +269,20 @@ public final class AgentServer: @unchecked Sendable {
         if let devDir = req.developerDir, !devDir.isEmpty { env["DEVELOPER_DIR"] = devDir }
 
         let config = MCPClient.Config(environment: env, debug: false, errOut: cfg.errOut)
-        let client = try await MCPClient.connect(config: config)
+        let newClient = try await MCPClient.connect(config: config)
 
-        // Store it
-        pooled.lock.withLock { pooled.client = client }
-        return client
+        // Double-check under lock: another task may have raced us
+        let winner: MCPClient = pooled.lock.withLock {
+            if let raceWinner = pooled.client {
+                return raceWinner
+            }
+            pooled.client = newClient
+            return newClient
+        }
+        if winner !== newClient {
+            Task { await newClient.abort() }
+        }
+        return winner
     }
 
     private func discardClient(_ pooled: PooledSession) {
@@ -395,22 +407,18 @@ public final class AgentServer: @unchecked Sendable {
 
     // MARK: - Status
 
-    private func runtimeStatus() -> AgentStatus {
+    private func runtimeStatus() -> RuntimeStatus {
         lock.lock()
         defer { lock.unlock() }
         var backendSessions = 0
         for (_, pooled) in sessions {
-            if pooled.client != nil { backendSessions += 1 }
+            pooled.lock.withLock {
+                if pooled.client != nil { backendSessions += 1 }
+            }
         }
-        return AgentStatus(
-            label: cfg.label,
-            plistPath: cfg.paths.plistPath,
-            plistInstalled: FileManager.default.fileExists(atPath: cfg.paths.plistPath),
-            socketPath: cfg.paths.socketPath,
-            socketReachable: true,
-            running: true,
+        return RuntimeStatus(
             pid: Int(ProcessInfo.processInfo.processIdentifier),
-            idleTimeoutNs: Int64(cfg.idleTimeout * 1_000_000_000),
+            idleTimeoutMs: Int64(cfg.idleTimeout * 1000),
             backendSessions: backendSessions
         )
     }
@@ -452,12 +460,16 @@ public final class AgentServer: @unchecked Sendable {
     // MARK: - I/O Helpers
 
     private func writeResponse(_ fd: Int32, _ resp: AgentResponse) {
-        guard let data = try? JSONEncoder().encode(resp) else { return }
-        var payload = data
-        payload.append(UInt8(ascii: "\n"))
-        payload.withUnsafeBytes { ptr in
-            _ = Darwin.write(fd, ptr.baseAddress, ptr.count)
+        let payload: Data
+        do {
+            var data = try JSONEncoder().encode(resp)
+            data.append(UInt8(ascii: "\n"))
+            payload = data
+        } catch {
+            cfg.errOut.write(Data("[error] failed to encode agent response: \(error)\n".utf8))
+            payload = Data("{\"error\":\"internal: response encoding failed\"}\n".utf8)
         }
+        _ = writeAllToFD(fd, payload)
     }
 
     private func resolveExecutablePath() throws -> String {
