@@ -34,9 +34,33 @@ private let guideRelatedWorkflows: [String: [String]] = [
     "diagnose": ["build", "search"],
 ]
 
+private let guideIntentKeywordRules: [(workflowID: String, keywords: [String], value: Int)] = [
+    ("diagnose", ["error", "warning", "fail", "failed", "issue", "issues", "log", "diagnostic", "diagnostics"], 5),
+    ("build", ["build", "compile", "rebuild", "app", "project"], 3),
+    ("test", ["test", "tests", "xctest", "ui test", "uitest"], 4),
+    ("read", ["read", "open", "show", "view", "inspect file", "source"], 4),
+    ("search", ["find", "search", "grep", "where", "list files"], 4),
+    ("edit", ["edit", "change", "update", "replace", "write", "create", "modify"], 4),
+]
+
+private let guideIntentBoostRules: [(workflowID: String, keywords: [String], value: Int)] = [
+    ("read", [".swift", ".plist", ".xcodeproj", ".xcworkspace"], 2),
+    ("diagnose", ["build error", "build failure"], 3),
+    ("test", ["run tests", "all tests"], 3),
+]
+
+private let guideSubjectPrefixes: [String: [String]] = [
+    "build": ["build ", "compile ", "rebuild "],
+    "test": ["run all tests for ", "run tests for ", "run test for ", "test ", "tests for ", "run all tests ", "run tests "],
+    "read": ["inspect file ", "inspect ", "read ", "open ", "show ", "view ", "source "],
+    "search": ["search for ", "search ", "find ", "grep ", "where is ", "where "],
+    "edit": ["update ", "edit ", "change ", "replace ", "write ", "create ", "modify "],
+    "diagnose": ["diagnose ", "fix ", "investigate ", "debug "],
+]
+
 // MARK: - Types
 
-private struct GuideIntentResult: Codable {
+struct GuideIntentResult: Codable {
     let raw: String
     let workflowId: String
     let confidence: Double
@@ -48,7 +72,7 @@ struct GuideWindowEntry: Codable {
     let workspacePath: String
 }
 
-private struct GuideWindowsResult: Codable {
+struct GuideWindowsResult: Codable {
     var attempted: Bool = false
     var ok: Bool = false
     let toolName: String
@@ -56,44 +80,44 @@ private struct GuideWindowsResult: Codable {
     var error: DemoStepError?
 }
 
-private struct DemoStepError: Codable {
+struct DemoStepError: Codable {
     let step: String
     let message: String
 }
 
-private struct GuideEnvironment: Codable {
+struct GuideEnvironment: Codable {
     let doctor: DoctorJSONReport
     var agentStatus: AgentStatus?
     var toolCatalog: GuideToolCatalog
     var windows: GuideWindowsResult
 }
 
-private struct GuideToolHighlight: Codable {
+struct GuideToolHighlight: Codable {
     let name: String
     let description: String
     let requiredArgs: [String]
 }
 
-private struct GuideToolCatalog: Codable {
+struct GuideToolCatalog: Codable {
     let count: Int
     let names: [String]
     let highlights: [GuideToolHighlight]
 }
 
-private struct GuideWorkflowStep: Codable {
+struct GuideWorkflowStep: Codable {
     let why: String
     let toolName: String
     let argumentsTemplate: [String: JSONValue]
     let whenToSkip: String
 }
 
-private struct GuideWorkflowFallback: Codable {
+struct GuideWorkflowFallback: Codable {
     let title: String
     let description: String
     let commands: [String]
 }
 
-private struct GuideWorkflowResult: Codable {
+struct GuideWorkflowResult: Codable {
     let id: String
     let title: String
     let reason: String
@@ -101,7 +125,7 @@ private struct GuideWorkflowResult: Codable {
     let fallbacks: [GuideWorkflowFallback]
 }
 
-private struct AgentGuideReport: Codable {
+struct AgentGuideReport: Codable {
     let success: Bool
     let intent: GuideIntentResult
     let environment: GuideEnvironment
@@ -135,27 +159,9 @@ func classifyGuideIntent(_ raw: String) -> IntentMatch {
     }
 
     let text = trimmed.lowercased()
-    var scores: [String: Int] = [:]
-    for id in guideWorkflowOrder { scores[id] = 0 }
-
-    func addScore(_ wf: String, _ keywords: [String], _ value: Int) {
-        for kw in keywords {
-            if text.contains(kw) { scores[wf, default: 0] += value }
-        }
-    }
-
-    addScore("diagnose", ["error", "warning", "fail", "failed", "issue", "issues", "log", "diagnostic", "diagnostics"], 5)
-    addScore("build", ["build", "compile", "rebuild", "app", "project"], 3)
-    addScore("test", ["test", "tests", "xctest", "ui test", "uitest"], 4)
-    addScore("read", ["read", "open", "show", "view", "inspect file", "source"], 4)
-    addScore("search", ["find", "search", "grep", "where", "list files"], 4)
-    addScore("edit", ["edit", "change", "update", "replace", "write", "create", "modify"], 4)
-
-    if text.contains(".swift") || text.contains(".plist") || text.contains(".xcodeproj") || text.contains(".xcworkspace") {
-        scores["read", default: 0] += 2
-    }
-    if text.contains("build error") || text.contains("build failure") { scores["diagnose", default: 0] += 3 }
-    if text.contains("run tests") || text.contains("all tests") { scores["test", default: 0] += 3 }
+    var scores = Dictionary(uniqueKeysWithValues: guideWorkflowOrder.map { ($0, 0) })
+    applyGuideIntentRules(&scores, text: text, rules: guideIntentKeywordRules)
+    applyGuideIntentRules(&scores, text: text, rules: guideIntentBoostRules)
 
     var bestWorkflow = "search"
     var bestScore = 0
@@ -189,22 +195,26 @@ func classifyGuideIntent(_ raw: String) -> IntentMatch {
     )
 }
 
-private func extractGuideSubject(_ raw: String, _ workflowID: String) -> String {
+func extractGuideSubject(_ raw: String, _ workflowID: String) -> String {
     let lower = raw.lowercased()
-    let prefixes: [String: [String]] = [
-        "build": ["build ", "compile ", "rebuild "],
-        "test": ["run all tests for ", "run tests for ", "run test for ", "test ", "tests for ", "run all tests ", "run tests "],
-        "read": ["inspect file ", "inspect ", "read ", "open ", "show ", "view ", "source "],
-        "search": ["search for ", "search ", "find ", "grep ", "where is ", "where "],
-        "edit": ["update ", "edit ", "change ", "replace ", "write ", "create ", "modify "],
-        "diagnose": ["diagnose ", "fix ", "investigate ", "debug "],
-    ]
-    for prefix in prefixes[workflowID] ?? [] {
+    for prefix in guideSubjectPrefixes[workflowID] ?? [] {
         if lower.hasPrefix(prefix) {
             return String(raw.dropFirst(prefix.count)).trimmingCharacters(in: .whitespaces)
         }
     }
     return raw
+}
+
+private func applyGuideIntentRules(
+    _ scores: inout [String: Int],
+    text: String,
+    rules: [(workflowID: String, keywords: [String], value: Int)]
+) {
+    for rule in rules {
+        for keyword in rule.keywords where text.contains(keyword) {
+            scores[rule.workflowID, default: 0] += rule.value
+        }
+    }
 }
 
 // MARK: - Window Matching
@@ -338,11 +348,45 @@ private func guideListWindowsStep(_ windowMatch: GuideWindowMatch, why: String) 
     )
 }
 
+private func guideToolStep(
+    why: String,
+    toolName: String,
+    argumentsTemplate: [String: JSONValue],
+    whenToSkip: String
+) -> GuideWorkflowStep {
+    GuideWorkflowStep(
+        why: why,
+        toolName: toolName,
+        argumentsTemplate: argumentsTemplate,
+        whenToSkip: whenToSkip
+    )
+}
+
 private func guideSchemaFallback(tools: [String]) -> GuideWorkflowFallback {
     GuideWorkflowFallback(
         title: "If you want schema reassurance",
         description: "Inspect the tool schemas before executing the flow.",
         commands: tools.map { "xcodecli tool inspect \($0) --json" }
+    )
+}
+
+private func makeGuideWorkflowResult(
+    id: String,
+    windowMatch: GuideWindowMatch,
+    baseReason: String,
+    steps: [GuideWorkflowStep],
+    fallbacks: [GuideWorkflowFallback],
+    nextCommands: [String]
+) -> (GuideWorkflowResult, [String]) {
+    (
+        GuideWorkflowResult(
+            id: id,
+            title: guideWorkflowTitles[id] ?? id,
+            reason: guideReasonForIntent(windowMatch, baseReason),
+            steps: steps,
+            fallbacks: fallbacks
+        ),
+        nextCommands
     )
 }
 
@@ -400,54 +444,6 @@ private func shellQuote(_ value: String) -> String {
     "'" + value.replacingOccurrences(of: "'", with: "'\\''" ) + "'"
 }
 
-private func formatBuildProjectCommand(_ tabIdentifier: String) -> String {
-    "xcodecli tool call BuildProject --timeout 30m --json '{\"tabIdentifier\":\(jsonQuote(tabIdentifier))}'"
-}
-
-private func formatGetBuildLogCommand(_ tabIdentifier: String, _ severity: String) -> String {
-    "xcodecli tool call GetBuildLog --timeout 60s --json '{\"tabIdentifier\":\(jsonQuote(tabIdentifier)),\"severity\":\(jsonQuote(severity))}'"
-}
-
-private func formatRunAllTestsCommand(_ tabIdentifier: String) -> String {
-    "xcodecli tool call RunAllTests --timeout 30m --json '{\"tabIdentifier\":\(jsonQuote(tabIdentifier))}'"
-}
-
-private func formatGetTestListCommand(_ tabIdentifier: String) -> String {
-    "xcodecli tool call GetTestList --timeout 60s --json '{\"tabIdentifier\":\(jsonQuote(tabIdentifier))}'"
-}
-
-private func formatRunSomeTestsTemplate(_ tabIdentifier: String) -> String {
-    "xcodecli tool call RunSomeTests --timeout 30m --json '{\"tabIdentifier\":\(jsonQuote(tabIdentifier)),\"tests\":[{\"targetName\":\"<targetName>\",\"testIdentifier\":\"<identifier>\"}]}'"
-}
-
-private func formatXcodeLSCommand(_ tabIdentifier: String, _ path: String) -> String {
-    "xcodecli tool call XcodeLS --timeout 60s --json '{\"tabIdentifier\":\(jsonQuote(tabIdentifier)),\"path\":\(jsonQuote(path))}'"
-}
-
-private func formatXcodeGlobCommand(_ tabIdentifier: String, _ pattern: String) -> String {
-    "xcodecli tool call XcodeGlob --timeout 60s --json '{\"tabIdentifier\":\(jsonQuote(tabIdentifier)),\"pattern\":\(jsonQuote(pattern))}'"
-}
-
-private func formatXcodeReadCommand(_ tabIdentifier: String, _ filePath: String) -> String {
-    "xcodecli tool call XcodeRead --timeout 60s --json '{\"tabIdentifier\":\(jsonQuote(tabIdentifier)),\"filePath\":\(jsonQuote(filePath))}'"
-}
-
-private func formatXcodeGrepCommand(_ tabIdentifier: String, _ pattern: String) -> String {
-    "xcodecli tool call XcodeGrep --timeout 60s --json '{\"tabIdentifier\":\(jsonQuote(tabIdentifier)),\"pattern\":\(jsonQuote(pattern)),\"outputMode\":\"content\",\"showLineNumbers\":true}'"
-}
-
-private func formatXcodeUpdateTemplate(_ tabIdentifier: String, _ filePath: String) -> String {
-    "xcodecli tool call XcodeUpdate --timeout 120s --json '{\"tabIdentifier\":\(jsonQuote(tabIdentifier)),\"filePath\":\(jsonQuote(filePath)),\"oldString\":\"<exact text to replace>\",\"newString\":\"<replacement text>\"}'"
-}
-
-private func formatRefreshIssuesCommand(_ tabIdentifier: String, _ filePath: String) -> String {
-    "xcodecli tool call XcodeRefreshCodeIssuesInFile --timeout 120s --json '{\"tabIdentifier\":\(jsonQuote(tabIdentifier)),\"filePath\":\(jsonQuote(filePath))}'"
-}
-
-private func formatXcodeWriteTemplate(_ tabIdentifier: String, _ filePath: String) -> String {
-    "xcodecli tool call XcodeWrite --timeout 120s --json '{\"tabIdentifier\":\(jsonQuote(tabIdentifier)),\"filePath\":\(jsonQuote(filePath)),\"content\":\"<full file contents>\"}'"
-}
-
 private func formatMaybeWindowsCommand(_ windowMatch: GuideWindowMatch) -> String {
     if let entry = windowMatch.matchedEntry {
         return "# already matched \(entry.tabIdentifier)"
@@ -457,69 +453,188 @@ private func formatMaybeWindowsCommand(_ windowMatch: GuideWindowMatch) -> Strin
 
 // MARK: - Per-Workflow Command Builders
 
-private func guideCommandsPrefix(_ windowMatch: GuideWindowMatch) -> [String] {
+func guideCommandsPrefix(_ windowMatch: GuideWindowMatch) -> [String] {
     if windowMatch.matchedEntry == nil {
         return ["xcodecli tool call XcodeListWindows --json '{}'"]
     }
     return []
 }
 
-private func buildGuideBuildCommands(_ tabIdentifier: String, _ windowMatch: GuideWindowMatch) -> [String] {
-    guideCommandsPrefix(windowMatch) + [
-        formatBuildProjectCommand(tabIdentifier),
-        formatGetBuildLogCommand(tabIdentifier, "error"),
-    ]
+func buildGuideBuildCommands(_ tabIdentifier: String, _ windowMatch: GuideWindowMatch) -> [String] {
+    buildGuideCommands(windowMatch, specs: [
+        GuideCommandSpec(
+            toolName: "BuildProject",
+            timeout: "30m",
+            arguments: [GuideCommandArgument(key: "tabIdentifier", value: .string(tabIdentifier))]
+        ),
+        GuideCommandSpec(
+            toolName: "GetBuildLog",
+            timeout: "60s",
+            arguments: [
+                GuideCommandArgument(key: "tabIdentifier", value: .string(tabIdentifier)),
+                GuideCommandArgument(key: "severity", value: .string("error")),
+            ]
+        ),
+    ])
 }
 
-private func buildGuideTestCommands(_ tabIdentifier: String, _ windowMatch: GuideWindowMatch) -> [String] {
-    guideCommandsPrefix(windowMatch) + [
-        formatRunAllTestsCommand(tabIdentifier),
-        formatGetBuildLogCommand(tabIdentifier, "error"),
-    ]
+func buildGuideTestCommands(_ tabIdentifier: String, _ windowMatch: GuideWindowMatch) -> [String] {
+    buildGuideCommands(windowMatch, specs: [
+        GuideCommandSpec(
+            toolName: "RunAllTests",
+            timeout: "30m",
+            arguments: [GuideCommandArgument(key: "tabIdentifier", value: .string(tabIdentifier))]
+        ),
+        GuideCommandSpec(
+            toolName: "GetBuildLog",
+            timeout: "60s",
+            arguments: [
+                GuideCommandArgument(key: "tabIdentifier", value: .string(tabIdentifier)),
+                GuideCommandArgument(key: "severity", value: .string("error")),
+            ]
+        ),
+    ])
 }
 
-private func buildGuideReadCommands(_ tabIdentifier: String, _ subject: String, _ windowMatch: GuideWindowMatch) -> [String] {
-    var commands = guideCommandsPrefix(windowMatch)
+func buildGuideReadCommands(_ tabIdentifier: String, _ subject: String, _ windowMatch: GuideWindowMatch) -> [String] {
+    var specs: [GuideCommandSpec] = []
     if looksLikeFileHint(subject) {
-        commands.append(formatXcodeGlobCommand(tabIdentifier, guideGlobPattern(subject)))
-        commands.append(formatXcodeReadCommand(tabIdentifier, "<path from XcodeGlob>"))
+        specs.append(GuideCommandSpec(
+            toolName: "XcodeGlob",
+            timeout: "60s",
+            arguments: [
+                GuideCommandArgument(key: "tabIdentifier", value: .string(tabIdentifier)),
+                GuideCommandArgument(key: "pattern", value: .string(guideGlobPattern(subject))),
+            ]
+        ))
+        specs.append(GuideCommandSpec(
+            toolName: "XcodeRead",
+            timeout: "60s",
+            arguments: [
+                GuideCommandArgument(key: "tabIdentifier", value: .string(tabIdentifier)),
+                GuideCommandArgument(key: "filePath", value: .string("<path from XcodeGlob>")),
+            ]
+        ))
     } else {
-        commands.append(formatXcodeLSCommand(tabIdentifier, ""))
-        commands.append(formatXcodeReadCommand(tabIdentifier, "<path from XcodeLS>"))
+        specs.append(GuideCommandSpec(
+            toolName: "XcodeLS",
+            timeout: "60s",
+            arguments: [
+                GuideCommandArgument(key: "tabIdentifier", value: .string(tabIdentifier)),
+                GuideCommandArgument(key: "path", value: .string("")),
+            ]
+        ))
+        specs.append(GuideCommandSpec(
+            toolName: "XcodeRead",
+            timeout: "60s",
+            arguments: [
+                GuideCommandArgument(key: "tabIdentifier", value: .string(tabIdentifier)),
+                GuideCommandArgument(key: "filePath", value: .string("<path from XcodeLS>")),
+            ]
+        ))
     }
-    return commands
+    return buildGuideCommands(windowMatch, specs: specs)
 }
 
-private func buildGuideSearchCommands(_ tabIdentifier: String, _ subject: String, _ windowMatch: GuideWindowMatch) -> [String] {
-    var commands = guideCommandsPrefix(windowMatch)
+func buildGuideSearchCommands(_ tabIdentifier: String, _ subject: String, _ windowMatch: GuideWindowMatch) -> [String] {
+    var specs: [GuideCommandSpec] = []
     if looksLikeFileHint(subject) {
-        commands.append(formatXcodeGlobCommand(tabIdentifier, guideGlobPattern(subject)))
+        specs.append(GuideCommandSpec(
+            toolName: "XcodeGlob",
+            timeout: "60s",
+            arguments: [
+                GuideCommandArgument(key: "tabIdentifier", value: .string(tabIdentifier)),
+                GuideCommandArgument(key: "pattern", value: .string(guideGlobPattern(subject))),
+            ]
+        ))
     } else {
-        commands.append(formatXcodeGrepCommand(tabIdentifier, guideSearchPattern(subject)))
+        specs.append(GuideCommandSpec(
+            toolName: "XcodeGrep",
+            timeout: "60s",
+            arguments: [
+                GuideCommandArgument(key: "tabIdentifier", value: .string(tabIdentifier)),
+                GuideCommandArgument(key: "pattern", value: .string(guideSearchPattern(subject))),
+                GuideCommandArgument(key: "outputMode", value: .string("content")),
+                GuideCommandArgument(key: "showLineNumbers", value: .bool(true)),
+            ]
+        ))
     }
-    return commands
+    return buildGuideCommands(windowMatch, specs: specs)
 }
 
-private func buildGuideEditCommands(_ tabIdentifier: String, _ subject: String, _ windowMatch: GuideWindowMatch) -> [String] {
-    var commands = guideCommandsPrefix(windowMatch)
+func buildGuideEditCommands(_ tabIdentifier: String, _ subject: String, _ windowMatch: GuideWindowMatch) -> [String] {
+    var specs: [GuideCommandSpec] = []
     var pathPlaceholder = "<path from XcodeLS>"
     if looksLikeFileHint(subject) {
-        commands.append(formatXcodeGlobCommand(tabIdentifier, guideGlobPattern(subject)))
+        specs.append(GuideCommandSpec(
+            toolName: "XcodeGlob",
+            timeout: "60s",
+            arguments: [
+                GuideCommandArgument(key: "tabIdentifier", value: .string(tabIdentifier)),
+                GuideCommandArgument(key: "pattern", value: .string(guideGlobPattern(subject))),
+            ]
+        ))
         pathPlaceholder = "<path from XcodeGlob>"
     } else {
-        commands.append(formatXcodeLSCommand(tabIdentifier, ""))
+        specs.append(GuideCommandSpec(
+            toolName: "XcodeLS",
+            timeout: "60s",
+            arguments: [
+                GuideCommandArgument(key: "tabIdentifier", value: .string(tabIdentifier)),
+                GuideCommandArgument(key: "path", value: .string("")),
+            ]
+        ))
     }
-    commands.append(formatXcodeReadCommand(tabIdentifier, pathPlaceholder))
-    commands.append(formatXcodeUpdateTemplate(tabIdentifier, pathPlaceholder))
-    commands.append(formatRefreshIssuesCommand(tabIdentifier, pathPlaceholder))
-    return commands
+    specs.append(contentsOf: [
+        GuideCommandSpec(
+            toolName: "XcodeRead",
+            timeout: "60s",
+            arguments: [
+                GuideCommandArgument(key: "tabIdentifier", value: .string(tabIdentifier)),
+                GuideCommandArgument(key: "filePath", value: .string(pathPlaceholder)),
+            ]
+        ),
+        GuideCommandSpec(
+            toolName: "XcodeUpdate",
+            timeout: "120s",
+            arguments: [
+                GuideCommandArgument(key: "tabIdentifier", value: .string(tabIdentifier)),
+                GuideCommandArgument(key: "filePath", value: .string(pathPlaceholder)),
+                GuideCommandArgument(key: "oldString", value: .string("<exact text to replace>")),
+                GuideCommandArgument(key: "newString", value: .string("<replacement text>")),
+            ]
+        ),
+        GuideCommandSpec(
+            toolName: "XcodeRefreshCodeIssuesInFile",
+            timeout: "120s",
+            arguments: [
+                GuideCommandArgument(key: "tabIdentifier", value: .string(tabIdentifier)),
+                GuideCommandArgument(key: "filePath", value: .string(pathPlaceholder)),
+            ]
+        ),
+    ])
+    return buildGuideCommands(windowMatch, specs: specs)
 }
 
-private func buildGuideDiagnoseCommands(_ tabIdentifier: String, _ windowMatch: GuideWindowMatch) -> [String] {
-    guideCommandsPrefix(windowMatch) + [
-        formatGetBuildLogCommand(tabIdentifier, "error"),
-        formatXcodeReadCommand(tabIdentifier, "<file path from the log or issue navigator>"),
-    ]
+func buildGuideDiagnoseCommands(_ tabIdentifier: String, _ windowMatch: GuideWindowMatch) -> [String] {
+    buildGuideCommands(windowMatch, specs: [
+        GuideCommandSpec(
+            toolName: "GetBuildLog",
+            timeout: "60s",
+            arguments: [
+                GuideCommandArgument(key: "tabIdentifier", value: .string(tabIdentifier)),
+                GuideCommandArgument(key: "severity", value: .string("error")),
+            ]
+        ),
+        GuideCommandSpec(
+            toolName: "XcodeRead",
+            timeout: "60s",
+            arguments: [
+                GuideCommandArgument(key: "tabIdentifier", value: .string(tabIdentifier)),
+                GuideCommandArgument(key: "filePath", value: .string("<file path from the log or issue navigator>")),
+            ]
+        ),
+    ])
 }
 
 // MARK: - Entry Point
@@ -530,83 +645,18 @@ func runAgentGuide(
 ) async throws {
     let intentMatch = classifyGuideIntent(intent)
 
-    // Collect environment
     let env = envDictionary()
     let (effective, resolved) = try resolveOptions(env: env, xcodePID: xcodePID, sessionID: sessionID)
-
-    var errors: [DemoStepError] = []
-    let agentStatus = try? await AgentClient.status()
-
-    let doctorInspector = DoctorInspector(processRunner: SystemProcessRunner())
-    let doctorReport = await doctorInspector.run(opts: DoctorOptions(
-        baseEnv: env, xcodePID: effective.xcodePID, sessionID: effective.sessionID,
-        sessionSource: resolved.sessionSource, sessionPath: resolved.sessionPath,
-        agentStatus: agentStatus
-    ))
-
-    // Build agent request
-    let bridgeEnv = EnvOptions.applyOverrides(baseEnv: env, opts: effective)
-    let request = buildAgentRequest(env: bridgeEnv, effective: effective, timeout: TimeInterval(timeout), debug: debug)
-
-    // List tools
-    var toolCatalog = GuideToolCatalog(count: 0, names: [], highlights: [])
-    var tools: [JSONValue]?
-    do {
-        let t = try await AgentClient.listTools(request: request)
-        tools = t
-        toolCatalog = buildGuideToolCatalog(t)
-    } catch {
-        errors.append(DemoStepError(step: "tools list", message: error.localizedDescription))
-    }
-
-    // Agent status post-tools
-    let postStatus = try? await AgentClient.status()
-
-    // Windows
-    var windows = GuideWindowsResult(toolName: "XcodeListWindows")
-    if let tools, findToolByName(tools, "XcodeListWindows") != nil {
-        windows.attempted = true
-        do {
-            var windowReq = request
-            windowReq.method = "tools/call"
-            let result = try await AgentClient.callTool(request: request, name: "XcodeListWindows", arguments: [:])
-            windows.ok = !result.isError
-            windows.entries = parseGuideWindowEntries(result.result)
-            if result.isError {
-                let msg = extractToolResultMessage(result.result)
-                windows.error = DemoStepError(step: "windows", message: msg.isEmpty ? "tool returned isError=true" : msg)
-                errors.append(windows.error!)
-            }
-        } catch {
-            windows.error = DemoStepError(step: "windows", message: error.localizedDescription)
-            errors.append(windows.error!)
-        }
-    } else if tools != nil {
-        windows.error = DemoStepError(step: "windows", message: "tool not found: XcodeListWindows")
-        errors.append(windows.error!)
-    }
-
-    let environment = GuideEnvironment(
-        doctor: doctorReport.jsonReport,
-        agentStatus: postStatus,
-        toolCatalog: toolCatalog,
-        windows: windows
+    let collected = await collectReadOnlyEnvironment(
+        env: env,
+        effective: effective,
+        resolved: resolved,
+        timeout: timeout,
+        debug: debug,
+        highlightToolNames: guideHighlightToolNames,
+        windowsStep: "windows"
     )
-
-    let windowMatch = resolveGuideWindowMatch(entries: windows.entries, subject: intentMatch.subject)
-    let (workflow, nextCommands) = buildGuideWorkflow(intentMatch, environment, windowMatch)
-
-    let report = AgentGuideReport(
-        success: errors.isEmpty,
-        intent: GuideIntentResult(
-            raw: intentMatch.raw, workflowId: intentMatch.workflowID,
-            confidence: intentMatch.confidence, alternatives: intentMatch.alternatives
-        ),
-        environment: environment,
-        workflow: workflow,
-        nextCommands: nextCommands,
-        errors: errors
-    )
+    let (report, windowMatch) = buildGuideReport(intentMatch: intentMatch, collected: collected)
 
     if json {
         let encoder = JSONEncoder()
@@ -619,6 +669,49 @@ func runAgentGuide(
     }
 }
 
+private func buildGuideReport(
+    intentMatch: IntentMatch,
+    collected: ReadOnlyEnvironmentCollection
+) -> (AgentGuideReport, GuideWindowMatch) {
+    let toolCatalog = GuideToolCatalog(
+        count: collected.toolCatalog.count,
+        names: collected.toolCatalog.names,
+        highlights: collected.toolCatalog.highlights.map {
+            GuideToolHighlight(name: $0.name, description: $0.description, requiredArgs: $0.requiredArgs)
+        }
+    )
+    let windows = GuideWindowsResult(
+        attempted: collected.windowsTool.attempted,
+        ok: collected.windowsTool.ok,
+        toolName: collected.windowsTool.toolName,
+        entries: collected.windowsTool.result.map(parseGuideWindowEntries) ?? [],
+        error: collected.windowsTool.error.map { DemoStepError(step: $0.step, message: $0.message) }
+    )
+    let errors = collected.errors.map { DemoStepError(step: $0.step, message: $0.message) }
+    let environment = GuideEnvironment(
+        doctor: collected.doctorReport.jsonReport,
+        agentStatus: collected.postToolsStatus,
+        toolCatalog: toolCatalog,
+        windows: windows
+    )
+    let windowMatch = resolveGuideWindowMatch(entries: windows.entries, subject: intentMatch.subject)
+    let (workflow, nextCommands) = buildGuideWorkflow(intentMatch, environment, windowMatch)
+    let report = AgentGuideReport(
+        success: errors.isEmpty,
+        intent: GuideIntentResult(
+            raw: intentMatch.raw,
+            workflowId: intentMatch.workflowID,
+            confidence: intentMatch.confidence,
+            alternatives: intentMatch.alternatives
+        ),
+        environment: environment,
+        workflow: workflow,
+        nextCommands: nextCommands,
+        errors: errors
+    )
+    return (report, windowMatch)
+}
+
 // MARK: - Tool Catalog Building
 
 let guideHighlightToolNames = [
@@ -628,36 +721,14 @@ let guideHighlightToolNames = [
 ]
 
 private func buildGuideToolCatalog(_ tools: [JSONValue]) -> GuideToolCatalog {
-    var names: [String] = []
-    for tool in tools {
-        if case .object(let obj) = tool, case .string(let name) = obj["name"] {
-            names.append(name)
+    let catalog = buildToolCatalogData(tools, highlightToolNames: guideHighlightToolNames)
+    return GuideToolCatalog(
+        count: catalog.count,
+        names: catalog.names,
+        highlights: catalog.highlights.map {
+            GuideToolHighlight(name: $0.name, description: $0.description, requiredArgs: $0.requiredArgs)
         }
-    }
-
-    var highlights: [GuideToolHighlight] = []
-    for name in guideHighlightToolNames {
-        guard let tool = findToolByName(tools, name) else { continue }
-        var desc = ""
-        var requiredArgs: [String] = []
-        if case .object(let obj) = tool {
-            if case .string(let d) = obj["description"] { desc = d }
-            if case .object(let schema) = obj["inputSchema"],
-               case .array(let req) = schema["required"] {
-                requiredArgs = req.compactMap { if case .string(let s) = $0 { return s } else { return nil } }
-            }
-        }
-        highlights.append(GuideToolHighlight(name: name, description: desc, requiredArgs: requiredArgs))
-    }
-
-    return GuideToolCatalog(count: names.count, names: names, highlights: highlights)
-}
-
-func findToolByName(_ tools: [JSONValue], _ name: String) -> JSONValue? {
-    tools.first { tool in
-        if case .object(let obj) = tool, case .string(let n) = obj["name"] { return n == name }
-        return false
-    }
+    )
 }
 
 // MARK: - Window Entry Parsing
@@ -716,13 +787,13 @@ private func buildGuideWorkflow(_ intent: IntentMatch, _ environment: GuideEnvir
 private func buildGuideBuildWorkflow(_ intent: IntentMatch, _ tabIdentifier: String, _ windowMatch: GuideWindowMatch) -> (GuideWorkflowResult, [String]) {
     let steps: [GuideWorkflowStep] = [
         guideListWindowsStep(windowMatch, why: "Use XcodeListWindows to identify the correct tabIdentifier for the project you want to build."),
-        GuideWorkflowStep(
+        guideToolStep(
             why: "BuildProject asks Xcode to build the active project or workspace shown in that tab.",
             toolName: "BuildProject",
             argumentsTemplate: ["tabIdentifier": .string(tabIdentifier)],
             whenToSkip: "Skip only if you decided not to build after checking the window list."
         ),
-        GuideWorkflowStep(
+        guideToolStep(
             why: "GetBuildLog is the fastest follow-up when BuildProject fails and you need the actionable error summary.",
             toolName: "GetBuildLog",
             argumentsTemplate: ["tabIdentifier": .string(tabIdentifier), "severity": .string("error")],
@@ -737,36 +808,42 @@ private func buildGuideBuildWorkflow(_ intent: IntentMatch, _ tabIdentifier: Str
             description: "Re-check the live Xcode windows and swap in the exact tabIdentifier yourself.",
             commands: [
                 "xcodecli tool call XcodeListWindows --json '{}'",
-                formatBuildProjectCommand("<tabIdentifier from above>"),
+                formatToolCallCommand(GuideCommandSpec(
+                    toolName: "BuildProject",
+                    timeout: "30m",
+                    arguments: [GuideCommandArgument(key: "tabIdentifier", value: .string("<tabIdentifier from above>"))]
+                )),
             ]
         ),
         guideSchemaFallback(tools: ["BuildProject", "GetBuildLog"]),
     ]
 
-    return (GuideWorkflowResult(
+    return makeGuideWorkflowResult(
         id: "build",
-        title: guideWorkflowTitles["build"] ?? "Build a project",
-        reason: guideReasonForIntent(windowMatch, "The request is about building, so the shortest safe sequence is window resolution -> build -> build log on failure."),
-        steps: steps, fallbacks: fallbacks
-    ), nextCommands)
+        windowMatch: windowMatch,
+        baseReason: "The request is about building, so the shortest safe sequence is window resolution -> build -> build log on failure.",
+        steps: steps,
+        fallbacks: fallbacks,
+        nextCommands: nextCommands
+    )
 }
 
 private func buildGuideTestWorkflow(_ intent: IntentMatch, _ tabIdentifier: String, _ windowMatch: GuideWindowMatch) -> (GuideWorkflowResult, [String]) {
     let steps: [GuideWorkflowStep] = [
         guideListWindowsStep(windowMatch, why: "Use XcodeListWindows first so the test run targets the correct workspace tab."),
-        GuideWorkflowStep(
+        guideToolStep(
             why: "RunAllTests is the fastest default when the request is to run the current scheme's full test plan.",
             toolName: "RunAllTests",
             argumentsTemplate: ["tabIdentifier": .string(tabIdentifier)],
             whenToSkip: "Skip this step only if you already know you want a narrower subset of tests."
         ),
-        GuideWorkflowStep(
+        guideToolStep(
             why: "GetTestList lets you narrow the run to specific tests before using RunSomeTests.",
             toolName: "GetTestList",
             argumentsTemplate: ["tabIdentifier": .string(tabIdentifier)],
             whenToSkip: "Skip if running the full test plan is acceptable."
         ),
-        GuideWorkflowStep(
+        guideToolStep(
             why: "GetBuildLog surfaces the underlying failure output if the test run fails early or produces build errors.",
             toolName: "GetBuildLog",
             argumentsTemplate: ["tabIdentifier": .string(tabIdentifier), "severity": .string("error")],
@@ -780,19 +857,43 @@ private func buildGuideTestWorkflow(_ intent: IntentMatch, _ tabIdentifier: Stri
             title: "If you need to run only some tests",
             description: "Enumerate the available tests first, then switch to RunSomeTests with targetName and testIdentifier values from the list.",
             commands: [
-                formatGetTestListCommand(tabIdentifier),
-                formatRunSomeTestsTemplate(tabIdentifier),
+                formatToolCallCommand(GuideCommandSpec(
+                    toolName: "GetTestList",
+                    timeout: "60s",
+                    arguments: [GuideCommandArgument(key: "tabIdentifier", value: .string(tabIdentifier))]
+                )),
+                formatToolCallCommand(GuideCommandSpec(
+                    toolName: "RunSomeTests",
+                    timeout: "30m",
+                    arguments: [
+                        GuideCommandArgument(
+                            key: "tabIdentifier",
+                            value: .string(tabIdentifier)
+                        ),
+                        GuideCommandArgument(
+                            key: "tests",
+                            value: .array([
+                                .object([
+                                    "targetName": .string("<targetName>"),
+                                    "testIdentifier": .string("<identifier>"),
+                                ])
+                            ])
+                        ),
+                    ]
+                )),
             ]
         ),
         guideSchemaFallback(tools: ["GetTestList", "RunSomeTests"]),
     ]
 
-    return (GuideWorkflowResult(
+    return makeGuideWorkflowResult(
         id: "test",
-        title: guideWorkflowTitles["test"] ?? "Run tests",
-        reason: guideReasonForIntent(windowMatch, "The request is about tests, so the default path is window resolution -> full test run -> narrower test selection only if needed."),
-        steps: steps, fallbacks: fallbacks
-    ), nextCommands)
+        windowMatch: windowMatch,
+        baseReason: "The request is about tests, so the default path is window resolution -> full test run -> narrower test selection only if needed.",
+        steps: steps,
+        fallbacks: fallbacks,
+        nextCommands: nextCommands
+    )
 }
 
 private func buildGuideReadWorkflow(_ intent: IntentMatch, _ tabIdentifier: String, _ windowMatch: GuideWindowMatch) -> (GuideWorkflowResult, [String]) {
@@ -811,13 +912,13 @@ private func buildGuideReadWorkflow(_ intent: IntentMatch, _ tabIdentifier: Stri
 
     let steps: [GuideWorkflowStep] = [
         guideListWindowsStep(windowMatch, why: "Use XcodeListWindows first so the subsequent file operations point at the right workspace tab."),
-        GuideWorkflowStep(
+        guideToolStep(
             why: lookupWhy,
             toolName: lookupTool,
             argumentsTemplate: lookupArgs,
             whenToSkip: "Skip if you already know the exact project-relative file path."
         ),
-        GuideWorkflowStep(
+        guideToolStep(
             why: "XcodeRead opens the target source file once you have its project-relative path.",
             toolName: "XcodeRead",
             argumentsTemplate: ["tabIdentifier": .string(tabIdentifier), "filePath": .string(readPathPlaceholder)],
@@ -832,18 +933,27 @@ private func buildGuideReadWorkflow(_ intent: IntentMatch, _ tabIdentifier: Stri
             description: "Browse the project tree manually before opening the file.",
             commands: [
                 formatMaybeWindowsCommand(windowMatch),
-                formatXcodeLSCommand(tabIdentifier, ""),
+                formatToolCallCommand(GuideCommandSpec(
+                    toolName: "XcodeLS",
+                    timeout: "60s",
+                    arguments: [
+                        GuideCommandArgument(key: "tabIdentifier", value: .string(tabIdentifier)),
+                        GuideCommandArgument(key: "path", value: .string("")),
+                    ]
+                )),
             ]
         ),
         guideSchemaFallback(tools: [lookupTool, "XcodeRead"]),
     ]
 
-    return (GuideWorkflowResult(
+    return makeGuideWorkflowResult(
         id: "read",
-        title: guideWorkflowTitles["read"] ?? "Read a file",
-        reason: guideReasonForIntent(windowMatch, "The request is about reading source, so the efficient path is window resolution -> file lookup -> file read."),
-        steps: steps, fallbacks: fallbacks
-    ), nextCommands)
+        windowMatch: windowMatch,
+        baseReason: "The request is about reading source, so the efficient path is window resolution -> file lookup -> file read.",
+        steps: steps,
+        fallbacks: fallbacks,
+        nextCommands: nextCommands
+    )
 }
 
 private func buildGuideSearchWorkflow(_ intent: IntentMatch, _ tabIdentifier: String, _ windowMatch: GuideWindowMatch) -> (GuideWorkflowResult, [String]) {
@@ -865,7 +975,7 @@ private func buildGuideSearchWorkflow(_ intent: IntentMatch, _ tabIdentifier: St
 
     let steps: [GuideWorkflowStep] = [
         guideListWindowsStep(windowMatch, why: "Use XcodeListWindows first so the search runs against the right project tab."),
-        GuideWorkflowStep(
+        guideToolStep(
             why: searchWhy,
             toolName: searchTool,
             argumentsTemplate: searchArgs,
@@ -885,12 +995,14 @@ private func buildGuideSearchWorkflow(_ intent: IntentMatch, _ tabIdentifier: St
         ),
     ]
 
-    return (GuideWorkflowResult(
+    return makeGuideWorkflowResult(
         id: "search",
-        title: guideWorkflowTitles["search"] ?? "Search code or files",
-        reason: guideReasonForIntent(windowMatch, "The request is about locating code or files, so the shortest safe path is window resolution -> targeted search."),
-        steps: steps, fallbacks: fallbacks
-    ), nextCommands)
+        windowMatch: windowMatch,
+        baseReason: "The request is about locating code or files, so the shortest safe path is window resolution -> targeted search.",
+        steps: steps,
+        fallbacks: fallbacks,
+        nextCommands: nextCommands
+    )
 }
 
 private func buildGuideEditWorkflow(_ intent: IntentMatch, _ tabIdentifier: String, _ windowMatch: GuideWindowMatch) -> (GuideWorkflowResult, [String]) {
@@ -907,19 +1019,19 @@ private func buildGuideEditWorkflow(_ intent: IntentMatch, _ tabIdentifier: Stri
 
     let steps: [GuideWorkflowStep] = [
         guideListWindowsStep(windowMatch, why: "Use XcodeListWindows first so the edit applies to the right workspace tab."),
-        GuideWorkflowStep(
+        guideToolStep(
             why: "Read the target file before changing it so you can compose the smallest safe edit payload.",
             toolName: lookupTool,
             argumentsTemplate: lookupArgs,
             whenToSkip: "Skip if you already know the exact project-relative path."
         ),
-        GuideWorkflowStep(
+        guideToolStep(
             why: "Open the file contents before deciding between XcodeUpdate and XcodeWrite.",
             toolName: "XcodeRead",
             argumentsTemplate: ["tabIdentifier": .string(tabIdentifier), "filePath": .string(pathPlaceholder)],
             whenToSkip: "Skip only if you already have the file contents in hand."
         ),
-        GuideWorkflowStep(
+        guideToolStep(
             why: "XcodeUpdate is the safer first choice for targeted in-file replacements.",
             toolName: "XcodeUpdate",
             argumentsTemplate: [
@@ -928,7 +1040,7 @@ private func buildGuideEditWorkflow(_ intent: IntentMatch, _ tabIdentifier: Stri
             ],
             whenToSkip: "Skip this step if the change is a full-file rewrite, in which case XcodeWrite may be simpler."
         ),
-        GuideWorkflowStep(
+        guideToolStep(
             why: "Refresh diagnostics immediately after the edit so you can verify that the file still parses or compiles cleanly.",
             toolName: "XcodeRefreshCodeIssuesInFile",
             argumentsTemplate: ["tabIdentifier": .string(tabIdentifier), "filePath": .string(pathPlaceholder)],
@@ -943,36 +1055,46 @@ private func buildGuideEditWorkflow(_ intent: IntentMatch, _ tabIdentifier: Stri
             description: "Switch from XcodeUpdate to XcodeWrite once you know the entire target file contents.",
             commands: [
                 "xcodecli tool inspect XcodeWrite --json",
-                formatXcodeWriteTemplate(tabIdentifier, pathPlaceholder),
+                formatToolCallCommand(GuideCommandSpec(
+                    toolName: "XcodeWrite",
+                    timeout: "120s",
+                    arguments: [
+                        GuideCommandArgument(key: "tabIdentifier", value: .string(tabIdentifier)),
+                        GuideCommandArgument(key: "filePath", value: .string(pathPlaceholder)),
+                        GuideCommandArgument(key: "content", value: .string("<full file contents>")),
+                    ]
+                )),
             ]
         ),
         guideSchemaFallback(tools: ["XcodeUpdate", "XcodeRefreshCodeIssuesInFile"]),
     ]
 
-    return (GuideWorkflowResult(
+    return makeGuideWorkflowResult(
         id: "edit",
-        title: guideWorkflowTitles["edit"] ?? "Edit a file safely",
-        reason: guideReasonForIntent(windowMatch, "The request is about changing code, so the safe path is window resolution -> locate/read the file -> small edit -> refresh diagnostics."),
-        steps: steps, fallbacks: fallbacks
-    ), nextCommands)
+        windowMatch: windowMatch,
+        baseReason: "The request is about changing code, so the safe path is window resolution -> locate/read the file -> small edit -> refresh diagnostics.",
+        steps: steps,
+        fallbacks: fallbacks,
+        nextCommands: nextCommands
+    )
 }
 
 private func buildGuideDiagnoseWorkflow(_ intent: IntentMatch, _ tabIdentifier: String, _ windowMatch: GuideWindowMatch) -> (GuideWorkflowResult, [String]) {
     let steps: [GuideWorkflowStep] = [
         guideListWindowsStep(windowMatch, why: "Use XcodeListWindows first so the diagnostics query targets the right workspace tab."),
-        GuideWorkflowStep(
+        guideToolStep(
             why: "GetBuildLog is the fastest route to the failing compiler or build messages.",
             toolName: "GetBuildLog",
             argumentsTemplate: ["tabIdentifier": .string(tabIdentifier), "severity": .string("error")],
             whenToSkip: "Skip only if you already know the exact failing file or line from somewhere else."
         ),
-        GuideWorkflowStep(
+        guideToolStep(
             why: "XcodeListNavigatorIssues is a good secondary view when the problem is already visible in Xcode's issue navigator.",
             toolName: "XcodeListNavigatorIssues",
             argumentsTemplate: ["tabIdentifier": .string(tabIdentifier)],
             whenToSkip: "Skip unless you want the issue navigator perspective in addition to the build log."
         ),
-        GuideWorkflowStep(
+        guideToolStep(
             why: "Open the failing file after the log points you at a concrete path.",
             toolName: "XcodeRead",
             argumentsTemplate: ["tabIdentifier": .string(tabIdentifier), "filePath": .string("<file path from the log or issue navigator>")],
@@ -993,20 +1115,29 @@ private func buildGuideDiagnoseWorkflow(_ intent: IntentMatch, _ tabIdentifier: 
             title: "If the problem is obviously file-specific",
             description: "Jump straight from the build log to XcodeRead for the failing file.",
             commands: [
-                formatXcodeReadCommand(tabIdentifier, "<file path from the log>"),
+                formatToolCallCommand(GuideCommandSpec(
+                    toolName: "XcodeRead",
+                    timeout: "60s",
+                    arguments: [
+                        GuideCommandArgument(key: "tabIdentifier", value: .string(tabIdentifier)),
+                        GuideCommandArgument(key: "filePath", value: .string("<file path from the log>")),
+                    ]
+                )),
             ]
         ),
     ]
 
-    return (GuideWorkflowResult(
+    return makeGuideWorkflowResult(
         id: "diagnose",
-        title: guideWorkflowTitles["diagnose"] ?? "Diagnose build or code issues",
-        reason: guideReasonForIntent(windowMatch, "The request is about errors or failure analysis, so the efficient path is window resolution -> diagnostics -> open the failing file."),
-        steps: steps, fallbacks: fallbacks
-    ), nextCommands)
+        windowMatch: windowMatch,
+        baseReason: "The request is about errors or failure analysis, so the efficient path is window resolution -> diagnostics -> open the failing file.",
+        steps: steps,
+        fallbacks: fallbacks,
+        nextCommands: nextCommands
+    )
 }
 
-private func buildGuideCatalogWorkflow() -> (GuideWorkflowResult, [String]) {
+func buildGuideCatalogWorkflow() -> (GuideWorkflowResult, [String]) {
     let steps = guideWorkflowOrder.map { id in
         GuideWorkflowStep(
             why: "Representative request: \"\(guideWorkflowExamples[id] ?? id)\"",
@@ -1050,72 +1181,76 @@ private func formatArgumentsTemplate(_ arguments: [String: JSONValue]) -> String
     return "{}"
 }
 
-private func formatAgentGuide(_ report: AgentGuideReport, _ windowMatch: GuideWindowMatch) -> String {
-    var b = ""
-    b += "xcodecli agent guide\n\n"
+func formatAgentGuide(_ report: AgentGuideReport, _ windowMatch: GuideWindowMatch) -> String {
+    [
+        "xcodecli agent guide",
+        formatGuideIntentSection(report),
+        formatGuideEnvironmentSection(report, windowMatch),
+        formatGuideWorkflowSection(report),
+        formatGuideNextCommandsSection(report),
+        formatGuideFallbacksSection(report),
+    ].joined(separator: "\n\n")
+}
 
-    b += "Intent\n"
-    b += "------\n"
+private func formatGuideIntentSection(_ report: AgentGuideReport) -> String {
+    var lines = ["Intent", "------"]
     let rawIntent = report.intent.raw.isEmpty ? "(none)" : report.intent.raw
-    b += "request: \(rawIntent)\n"
-    b += "workflow: \(report.intent.workflowId) (confidence \(String(format: "%.2f", report.intent.confidence)))\n"
+    lines.append("request: \(rawIntent)")
+    lines.append("workflow: \(report.intent.workflowId) (confidence \(String(format: "%.2f", report.intent.confidence)))")
     if !report.intent.alternatives.isEmpty {
-        b += "alternatives: \(report.intent.alternatives.joined(separator: ", "))\n"
+        lines.append("alternatives: \(report.intent.alternatives.joined(separator: ", "))")
     }
+    return lines.joined(separator: "\n")
+}
 
-    b += "\nEnvironment\n"
-    b += "-----------\n"
+private func formatGuideEnvironmentSection(_ report: AgentGuideReport, _ windowMatch: GuideWindowMatch) -> String {
+    var lines = ["Environment", "-----------"]
     let summary = report.environment.doctor.summary
-    b += "doctor: \(report.environment.doctor.success) (\(summary.ok) ok, \(summary.warn) warn, \(summary.fail) fail, \(summary.info) info)\n"
-    b += "tool catalog: \(report.environment.toolCatalog.count) tools\n"
+    lines.append("doctor: \(report.environment.doctor.success) (\(summary.ok) ok, \(summary.warn) warn, \(summary.fail) fail, \(summary.info) info)")
+    lines.append("tool catalog: \(report.environment.toolCatalog.count) tools")
     if let status = report.environment.agentStatus {
-        b += "launchagent: running=\(status.running) socketReachable=\(status.socketReachable) backendSessions=\(status.backendSessions)\n"
+        lines.append("launchagent: running=\(status.running) socketReachable=\(status.socketReachable) backendSessions=\(status.backendSessions)")
     }
     if report.environment.windows.attempted {
-        b += "windows: \(report.environment.windows.entries.count) discovered\n"
+        lines.append("windows: \(report.environment.windows.entries.count) discovered")
     } else {
-        b += "windows: not collected\n"
+        lines.append("windows: not collected")
     }
     if !windowMatch.note.isEmpty {
-        b += "window match: \(windowMatch.note)\n"
+        lines.append("window match: \(windowMatch.note)")
     }
     if !report.errors.isEmpty {
-        b += "notes:\n"
-        for err in report.errors {
-            b += "- \(err.step): \(err.message)\n"
-        }
+        lines.append("notes:")
+        lines.append(contentsOf: report.errors.map { "- \($0.step): \($0.message)" })
     }
+    return lines.joined(separator: "\n")
+}
 
-    b += "\nRecommended Workflow\n"
-    b += "--------------------\n"
-    b += "\(report.workflow.title) — \(report.workflow.reason)\n"
+private func formatGuideWorkflowSection(_ report: AgentGuideReport) -> String {
+    var lines = ["Recommended Workflow", "--------------------", "\(report.workflow.title) — \(report.workflow.reason)"]
     if report.workflow.id == guideWorkflowCatalog {
-        for step in report.workflow.steps {
-            b += "- \(step.toolName): \(step.why)\n"
-        }
+        lines.append(contentsOf: report.workflow.steps.map { "- \($0.toolName): \($0.why)" })
     } else {
         for (index, step) in report.workflow.steps.enumerated() {
-            b += "\(index + 1). \(step.toolName)\n"
-            b += "   why: \(step.why)\n"
-            b += "   args: \(formatArgumentsTemplate(step.argumentsTemplate))\n"
-            b += "   skip: \(step.whenToSkip)\n"
+            lines.append("\(index + 1). \(step.toolName)")
+            lines.append("   why: \(step.why)")
+            lines.append("   args: \(formatArgumentsTemplate(step.argumentsTemplate))")
+            lines.append("   skip: \(step.whenToSkip)")
         }
     }
+    return lines.joined(separator: "\n")
+}
 
-    b += "\nExact Next Commands\n"
-    b += "-------------------\n"
-    for cmd in report.nextCommands {
-        b += "- \(cmd)\n"
-    }
+private func formatGuideNextCommandsSection(_ report: AgentGuideReport) -> String {
+    let lines = ["Exact Next Commands", "-------------------"] + report.nextCommands.map { "- \($0)" }
+    return lines.joined(separator: "\n")
+}
 
-    b += "\nFallbacks\n"
-    b += "---------\n"
+private func formatGuideFallbacksSection(_ report: AgentGuideReport) -> String {
+    var lines = ["Fallbacks", "---------"]
     for fallback in report.workflow.fallbacks {
-        b += "- \(fallback.title): \(fallback.description)\n"
-        for cmd in fallback.commands {
-            b += "  \(cmd)\n"
-        }
+        lines.append("- \(fallback.title): \(fallback.description)")
+        lines.append(contentsOf: fallback.commands.map { "  \($0)" })
     }
-
-    return b
+    return lines.joined(separator: "\n")
 }
