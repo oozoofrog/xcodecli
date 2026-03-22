@@ -1,6 +1,7 @@
 import Testing
 import Foundation
 @testable import xcodecli
+import XcodeCLICore
 
 @Suite("JSON Output Support")
 struct JSONOutputSupportTests {
@@ -42,5 +43,32 @@ struct JSONOutputSupportTests {
         let string = String(data: data, encoding: .utf8)!
         #expect(string.contains("\"count\" : 42"))
         #expect(string.contains("\"name\" : \"test\""))
+    }
+
+    @Test("parseJSONArguments decodes a valid JSON object")
+    func parseValidObject() throws {
+        let result = try parseJSONArguments(#"{"key": "value", "count": 42}"#)
+        #expect(result["key"] == .string("value"))
+        #expect(result["count"] == .int(42))
+    }
+
+    @Test("parseJSONArguments throws on non-object JSON")
+    func parseNonObject() {
+        #expect(throws: (any Error).self) {
+            _ = try parseJSONArguments("[1, 2, 3]")
+        }
+    }
+
+    @Test("parseJSONArguments throws on invalid JSON")
+    func parseInvalidJSON() {
+        #expect(throws: (any Error).self) {
+            _ = try parseJSONArguments("not json at all")
+        }
+    }
+
+    @Test("parseJSONArguments handles empty object")
+    func parseEmptyObject() throws {
+        let result = try parseJSONArguments("{}")
+        #expect(result.isEmpty)
     }
 }

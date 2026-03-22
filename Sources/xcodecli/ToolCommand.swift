@@ -124,13 +124,5 @@ struct ToolCommand: AsyncParsableCommand {
             }
         }
 
-        private func parseJSONArguments(_ raw: String) throws -> [String: JSONValue] {
-            let data = Data(raw.utf8)
-            let value = try JSONDecoder().decode(JSONValue.self, from: data)
-            guard case .object(let obj) = value else {
-                throw ValidationError("JSON payload must decode to a JSON object")
-            }
-            return obj
-        }
     }
 }
