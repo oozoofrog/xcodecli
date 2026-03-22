@@ -338,11 +338,45 @@ private func guideListWindowsStep(_ windowMatch: GuideWindowMatch, why: String) 
     )
 }
 
+private func guideToolStep(
+    why: String,
+    toolName: String,
+    argumentsTemplate: [String: JSONValue],
+    whenToSkip: String
+) -> GuideWorkflowStep {
+    GuideWorkflowStep(
+        why: why,
+        toolName: toolName,
+        argumentsTemplate: argumentsTemplate,
+        whenToSkip: whenToSkip
+    )
+}
+
 private func guideSchemaFallback(tools: [String]) -> GuideWorkflowFallback {
     GuideWorkflowFallback(
         title: "If you want schema reassurance",
         description: "Inspect the tool schemas before executing the flow.",
         commands: tools.map { "xcodecli tool inspect \($0) --json" }
+    )
+}
+
+private func makeGuideWorkflowResult(
+    id: String,
+    windowMatch: GuideWindowMatch,
+    baseReason: String,
+    steps: [GuideWorkflowStep],
+    fallbacks: [GuideWorkflowFallback],
+    nextCommands: [String]
+) -> (GuideWorkflowResult, [String]) {
+    (
+        GuideWorkflowResult(
+            id: id,
+            title: guideWorkflowTitles[id] ?? id,
+            reason: guideReasonForIntent(windowMatch, baseReason),
+            steps: steps,
+            fallbacks: fallbacks
+        ),
+        nextCommands
     )
 }
 
@@ -737,13 +771,13 @@ private func buildGuideWorkflow(_ intent: IntentMatch, _ environment: GuideEnvir
 private func buildGuideBuildWorkflow(_ intent: IntentMatch, _ tabIdentifier: String, _ windowMatch: GuideWindowMatch) -> (GuideWorkflowResult, [String]) {
     let steps: [GuideWorkflowStep] = [
         guideListWindowsStep(windowMatch, why: "Use XcodeListWindows to identify the correct tabIdentifier for the project you want to build."),
-        GuideWorkflowStep(
+        guideToolStep(
             why: "BuildProject asks Xcode to build the active project or workspace shown in that tab.",
             toolName: "BuildProject",
             argumentsTemplate: ["tabIdentifier": .string(tabIdentifier)],
             whenToSkip: "Skip only if you decided not to build after checking the window list."
         ),
-        GuideWorkflowStep(
+        guideToolStep(
             why: "GetBuildLog is the fastest follow-up when BuildProject fails and you need the actionable error summary.",
             toolName: "GetBuildLog",
             argumentsTemplate: ["tabIdentifier": .string(tabIdentifier), "severity": .string("error")],
@@ -768,30 +802,32 @@ private func buildGuideBuildWorkflow(_ intent: IntentMatch, _ tabIdentifier: Str
         guideSchemaFallback(tools: ["BuildProject", "GetBuildLog"]),
     ]
 
-    return (GuideWorkflowResult(
+    return makeGuideWorkflowResult(
         id: "build",
-        title: guideWorkflowTitles["build"] ?? "Build a project",
-        reason: guideReasonForIntent(windowMatch, "The request is about building, so the shortest safe sequence is window resolution -> build -> build log on failure."),
-        steps: steps, fallbacks: fallbacks
-    ), nextCommands)
+        windowMatch: windowMatch,
+        baseReason: "The request is about building, so the shortest safe sequence is window resolution -> build -> build log on failure.",
+        steps: steps,
+        fallbacks: fallbacks,
+        nextCommands: nextCommands
+    )
 }
 
 private func buildGuideTestWorkflow(_ intent: IntentMatch, _ tabIdentifier: String, _ windowMatch: GuideWindowMatch) -> (GuideWorkflowResult, [String]) {
     let steps: [GuideWorkflowStep] = [
         guideListWindowsStep(windowMatch, why: "Use XcodeListWindows first so the test run targets the correct workspace tab."),
-        GuideWorkflowStep(
+        guideToolStep(
             why: "RunAllTests is the fastest default when the request is to run the current scheme's full test plan.",
             toolName: "RunAllTests",
             argumentsTemplate: ["tabIdentifier": .string(tabIdentifier)],
             whenToSkip: "Skip this step only if you already know you want a narrower subset of tests."
         ),
-        GuideWorkflowStep(
+        guideToolStep(
             why: "GetTestList lets you narrow the run to specific tests before using RunSomeTests.",
             toolName: "GetTestList",
             argumentsTemplate: ["tabIdentifier": .string(tabIdentifier)],
             whenToSkip: "Skip if running the full test plan is acceptable."
         ),
-        GuideWorkflowStep(
+        guideToolStep(
             why: "GetBuildLog surfaces the underlying failure output if the test run fails early or produces build errors.",
             toolName: "GetBuildLog",
             argumentsTemplate: ["tabIdentifier": .string(tabIdentifier), "severity": .string("error")],
@@ -834,12 +870,14 @@ private func buildGuideTestWorkflow(_ intent: IntentMatch, _ tabIdentifier: Stri
         guideSchemaFallback(tools: ["GetTestList", "RunSomeTests"]),
     ]
 
-    return (GuideWorkflowResult(
+    return makeGuideWorkflowResult(
         id: "test",
-        title: guideWorkflowTitles["test"] ?? "Run tests",
-        reason: guideReasonForIntent(windowMatch, "The request is about tests, so the default path is window resolution -> full test run -> narrower test selection only if needed."),
-        steps: steps, fallbacks: fallbacks
-    ), nextCommands)
+        windowMatch: windowMatch,
+        baseReason: "The request is about tests, so the default path is window resolution -> full test run -> narrower test selection only if needed.",
+        steps: steps,
+        fallbacks: fallbacks,
+        nextCommands: nextCommands
+    )
 }
 
 private func buildGuideReadWorkflow(_ intent: IntentMatch, _ tabIdentifier: String, _ windowMatch: GuideWindowMatch) -> (GuideWorkflowResult, [String]) {
@@ -858,13 +896,13 @@ private func buildGuideReadWorkflow(_ intent: IntentMatch, _ tabIdentifier: Stri
 
     let steps: [GuideWorkflowStep] = [
         guideListWindowsStep(windowMatch, why: "Use XcodeListWindows first so the subsequent file operations point at the right workspace tab."),
-        GuideWorkflowStep(
+        guideToolStep(
             why: lookupWhy,
             toolName: lookupTool,
             argumentsTemplate: lookupArgs,
             whenToSkip: "Skip if you already know the exact project-relative file path."
         ),
-        GuideWorkflowStep(
+        guideToolStep(
             why: "XcodeRead opens the target source file once you have its project-relative path.",
             toolName: "XcodeRead",
             argumentsTemplate: ["tabIdentifier": .string(tabIdentifier), "filePath": .string(readPathPlaceholder)],
@@ -892,12 +930,14 @@ private func buildGuideReadWorkflow(_ intent: IntentMatch, _ tabIdentifier: Stri
         guideSchemaFallback(tools: [lookupTool, "XcodeRead"]),
     ]
 
-    return (GuideWorkflowResult(
+    return makeGuideWorkflowResult(
         id: "read",
-        title: guideWorkflowTitles["read"] ?? "Read a file",
-        reason: guideReasonForIntent(windowMatch, "The request is about reading source, so the efficient path is window resolution -> file lookup -> file read."),
-        steps: steps, fallbacks: fallbacks
-    ), nextCommands)
+        windowMatch: windowMatch,
+        baseReason: "The request is about reading source, so the efficient path is window resolution -> file lookup -> file read.",
+        steps: steps,
+        fallbacks: fallbacks,
+        nextCommands: nextCommands
+    )
 }
 
 private func buildGuideSearchWorkflow(_ intent: IntentMatch, _ tabIdentifier: String, _ windowMatch: GuideWindowMatch) -> (GuideWorkflowResult, [String]) {
@@ -919,7 +959,7 @@ private func buildGuideSearchWorkflow(_ intent: IntentMatch, _ tabIdentifier: St
 
     let steps: [GuideWorkflowStep] = [
         guideListWindowsStep(windowMatch, why: "Use XcodeListWindows first so the search runs against the right project tab."),
-        GuideWorkflowStep(
+        guideToolStep(
             why: searchWhy,
             toolName: searchTool,
             argumentsTemplate: searchArgs,
@@ -939,12 +979,14 @@ private func buildGuideSearchWorkflow(_ intent: IntentMatch, _ tabIdentifier: St
         ),
     ]
 
-    return (GuideWorkflowResult(
+    return makeGuideWorkflowResult(
         id: "search",
-        title: guideWorkflowTitles["search"] ?? "Search code or files",
-        reason: guideReasonForIntent(windowMatch, "The request is about locating code or files, so the shortest safe path is window resolution -> targeted search."),
-        steps: steps, fallbacks: fallbacks
-    ), nextCommands)
+        windowMatch: windowMatch,
+        baseReason: "The request is about locating code or files, so the shortest safe path is window resolution -> targeted search.",
+        steps: steps,
+        fallbacks: fallbacks,
+        nextCommands: nextCommands
+    )
 }
 
 private func buildGuideEditWorkflow(_ intent: IntentMatch, _ tabIdentifier: String, _ windowMatch: GuideWindowMatch) -> (GuideWorkflowResult, [String]) {
@@ -961,19 +1003,19 @@ private func buildGuideEditWorkflow(_ intent: IntentMatch, _ tabIdentifier: Stri
 
     let steps: [GuideWorkflowStep] = [
         guideListWindowsStep(windowMatch, why: "Use XcodeListWindows first so the edit applies to the right workspace tab."),
-        GuideWorkflowStep(
+        guideToolStep(
             why: "Read the target file before changing it so you can compose the smallest safe edit payload.",
             toolName: lookupTool,
             argumentsTemplate: lookupArgs,
             whenToSkip: "Skip if you already know the exact project-relative path."
         ),
-        GuideWorkflowStep(
+        guideToolStep(
             why: "Open the file contents before deciding between XcodeUpdate and XcodeWrite.",
             toolName: "XcodeRead",
             argumentsTemplate: ["tabIdentifier": .string(tabIdentifier), "filePath": .string(pathPlaceholder)],
             whenToSkip: "Skip only if you already have the file contents in hand."
         ),
-        GuideWorkflowStep(
+        guideToolStep(
             why: "XcodeUpdate is the safer first choice for targeted in-file replacements.",
             toolName: "XcodeUpdate",
             argumentsTemplate: [
@@ -982,7 +1024,7 @@ private func buildGuideEditWorkflow(_ intent: IntentMatch, _ tabIdentifier: Stri
             ],
             whenToSkip: "Skip this step if the change is a full-file rewrite, in which case XcodeWrite may be simpler."
         ),
-        GuideWorkflowStep(
+        guideToolStep(
             why: "Refresh diagnostics immediately after the edit so you can verify that the file still parses or compiles cleanly.",
             toolName: "XcodeRefreshCodeIssuesInFile",
             argumentsTemplate: ["tabIdentifier": .string(tabIdentifier), "filePath": .string(pathPlaceholder)],
@@ -1011,30 +1053,32 @@ private func buildGuideEditWorkflow(_ intent: IntentMatch, _ tabIdentifier: Stri
         guideSchemaFallback(tools: ["XcodeUpdate", "XcodeRefreshCodeIssuesInFile"]),
     ]
 
-    return (GuideWorkflowResult(
+    return makeGuideWorkflowResult(
         id: "edit",
-        title: guideWorkflowTitles["edit"] ?? "Edit a file safely",
-        reason: guideReasonForIntent(windowMatch, "The request is about changing code, so the safe path is window resolution -> locate/read the file -> small edit -> refresh diagnostics."),
-        steps: steps, fallbacks: fallbacks
-    ), nextCommands)
+        windowMatch: windowMatch,
+        baseReason: "The request is about changing code, so the safe path is window resolution -> locate/read the file -> small edit -> refresh diagnostics.",
+        steps: steps,
+        fallbacks: fallbacks,
+        nextCommands: nextCommands
+    )
 }
 
 private func buildGuideDiagnoseWorkflow(_ intent: IntentMatch, _ tabIdentifier: String, _ windowMatch: GuideWindowMatch) -> (GuideWorkflowResult, [String]) {
     let steps: [GuideWorkflowStep] = [
         guideListWindowsStep(windowMatch, why: "Use XcodeListWindows first so the diagnostics query targets the right workspace tab."),
-        GuideWorkflowStep(
+        guideToolStep(
             why: "GetBuildLog is the fastest route to the failing compiler or build messages.",
             toolName: "GetBuildLog",
             argumentsTemplate: ["tabIdentifier": .string(tabIdentifier), "severity": .string("error")],
             whenToSkip: "Skip only if you already know the exact failing file or line from somewhere else."
         ),
-        GuideWorkflowStep(
+        guideToolStep(
             why: "XcodeListNavigatorIssues is a good secondary view when the problem is already visible in Xcode's issue navigator.",
             toolName: "XcodeListNavigatorIssues",
             argumentsTemplate: ["tabIdentifier": .string(tabIdentifier)],
             whenToSkip: "Skip unless you want the issue navigator perspective in addition to the build log."
         ),
-        GuideWorkflowStep(
+        guideToolStep(
             why: "Open the failing file after the log points you at a concrete path.",
             toolName: "XcodeRead",
             argumentsTemplate: ["tabIdentifier": .string(tabIdentifier), "filePath": .string("<file path from the log or issue navigator>")],
@@ -1067,12 +1111,14 @@ private func buildGuideDiagnoseWorkflow(_ intent: IntentMatch, _ tabIdentifier: 
         ),
     ]
 
-    return (GuideWorkflowResult(
+    return makeGuideWorkflowResult(
         id: "diagnose",
-        title: guideWorkflowTitles["diagnose"] ?? "Diagnose build or code issues",
-        reason: guideReasonForIntent(windowMatch, "The request is about errors or failure analysis, so the efficient path is window resolution -> diagnostics -> open the failing file."),
-        steps: steps, fallbacks: fallbacks
-    ), nextCommands)
+        windowMatch: windowMatch,
+        baseReason: "The request is about errors or failure analysis, so the efficient path is window resolution -> diagnostics -> open the failing file.",
+        steps: steps,
+        fallbacks: fallbacks,
+        nextCommands: nextCommands
+    )
 }
 
 private func buildGuideCatalogWorkflow() -> (GuideWorkflowResult, [String]) {
