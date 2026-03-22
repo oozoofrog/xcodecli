@@ -137,30 +137,14 @@ func runAgentDemo(
 // MARK: - Tool Catalog
 
 private func buildDemoToolCatalog(_ tools: [JSONValue]) -> DemoToolCatalog {
-    var names: [String] = []
-    for tool in tools {
-        if case .object(let obj) = tool, case .string(let name) = obj["name"] {
-            names.append(name)
+    let catalog = buildToolCatalogData(tools, highlightToolNames: demoHighlightToolNames)
+    return DemoToolCatalog(
+        count: catalog.count,
+        names: catalog.names,
+        highlights: catalog.highlights.map {
+            DemoToolHighlight(name: $0.name, description: $0.description, requiredArgs: $0.requiredArgs)
         }
-    }
-
-    var highlights: [DemoToolHighlight] = []
-    for name in demoHighlightToolNames {
-        guard let tool = findToolByName(tools, name) else { continue }
-
-        var desc = ""
-        var requiredArgs: [String] = []
-        if case .object(let obj) = tool {
-            if case .string(let d) = obj["description"] { desc = d }
-            if case .object(let schema) = obj["inputSchema"],
-               case .array(let req) = schema["required"] {
-                requiredArgs = req.compactMap { if case .string(let s) = $0 { return s } else { return nil } }
-            }
-        }
-        highlights.append(DemoToolHighlight(name: name, description: desc, requiredArgs: requiredArgs))
-    }
-
-    return DemoToolCatalog(count: names.count, names: names, highlights: highlights)
+    )
 }
 
 // MARK: - Helpers

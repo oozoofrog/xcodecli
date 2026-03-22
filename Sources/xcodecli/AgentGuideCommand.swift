@@ -628,36 +628,14 @@ let guideHighlightToolNames = [
 ]
 
 private func buildGuideToolCatalog(_ tools: [JSONValue]) -> GuideToolCatalog {
-    var names: [String] = []
-    for tool in tools {
-        if case .object(let obj) = tool, case .string(let name) = obj["name"] {
-            names.append(name)
+    let catalog = buildToolCatalogData(tools, highlightToolNames: guideHighlightToolNames)
+    return GuideToolCatalog(
+        count: catalog.count,
+        names: catalog.names,
+        highlights: catalog.highlights.map {
+            GuideToolHighlight(name: $0.name, description: $0.description, requiredArgs: $0.requiredArgs)
         }
-    }
-
-    var highlights: [GuideToolHighlight] = []
-    for name in guideHighlightToolNames {
-        guard let tool = findToolByName(tools, name) else { continue }
-        var desc = ""
-        var requiredArgs: [String] = []
-        if case .object(let obj) = tool {
-            if case .string(let d) = obj["description"] { desc = d }
-            if case .object(let schema) = obj["inputSchema"],
-               case .array(let req) = schema["required"] {
-                requiredArgs = req.compactMap { if case .string(let s) = $0 { return s } else { return nil } }
-            }
-        }
-        highlights.append(GuideToolHighlight(name: name, description: desc, requiredArgs: requiredArgs))
-    }
-
-    return GuideToolCatalog(count: names.count, names: names, highlights: highlights)
-}
-
-func findToolByName(_ tools: [JSONValue], _ name: String) -> JSONValue? {
-    tools.first { tool in
-        if case .object(let obj) = tool, case .string(let n) = obj["name"] { return n == name }
-        return false
-    }
+    )
 }
 
 // MARK: - Window Entry Parsing
