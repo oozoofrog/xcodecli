@@ -9,10 +9,10 @@
 - Changes that look local often cross package boundaries: session handling affects agent runtime behavior, bridge env resolution affects doctor output, and MCP client behavior affects both bridge and agent flows.
 
 ## Key Files
-- `./agent/client.go`: LaunchAgent client, autostart, and socket RPC entrypoints.
-- `./agent/server.go`: long-lived runtime, session pooling, and request dispatch.
-- `./bridge/session.go`: persistent session ID resolution and storage.
-- `./mcp/client.go`: direct MCP client transport over `xcrun mcpbridge`.
+- [internal/agent/client.go](./agent/client.go): LaunchAgent client, autostart, and socket RPC entrypoints.
+- [internal/agent/server.go](./agent/server.go): long-lived runtime, session pooling, and request dispatch.
+- [internal/bridge/session.go](./bridge/session.go): persistent session ID resolution and storage.
+- [internal/mcp/client.go](./mcp/client.go): direct MCP client transport over `xcrun mcpbridge`.
 
 ## Package Responsibilities
 - `agent`
@@ -39,20 +39,20 @@
 
 ## Change Coupling
 - Session behavior changes usually require reviewing:
-  - `./bridge/session.go`
-  - `./agent/client.go`
-  - `./agent/server.go`
-  - CLI-facing messages in `../cmd/xcodecli/`
+  - [internal/bridge/session.go](./bridge/session.go)
+  - [internal/agent/client.go](./agent/client.go)
+  - [internal/agent/server.go](./agent/server.go)
+  - CLI-facing messages in [cmd/xcodecli/](../cmd/xcodecli/)
 - LaunchAgent/runtime changes usually require reviewing:
-  - `./agent/client.go`
-  - `./agent/server.go`
-  - `./agent/plist.go`
-  - status/reporting paths in `../cmd/xcodecli/`
+  - [internal/agent/client.go](./agent/client.go)
+  - [internal/agent/server.go](./agent/server.go)
+  - [internal/agent/plist.go](./agent/plist.go)
+  - status/reporting paths in [cmd/xcodecli/](../cmd/xcodecli/)
 - MCP transport changes usually require reviewing:
-  - `./mcp/client.go`
-  - `./mcp/server.go`
-  - `./agent/client.go`
-  - `tool inspect` / `tool call` behavior in `../cmd/xcodecli/`
+  - [internal/mcp/client.go](./mcp/client.go)
+  - [internal/mcp/server.go](./mcp/server.go)
+  - [internal/agent/client.go](./agent/client.go)
+  - `tool inspect` / `tool call` behavior in [cmd/xcodecli/](../cmd/xcodecli/)
 
 ## Verification Notes
 - Package-level tests matter here. Keep `go test ./...` green after any boundary shift.
