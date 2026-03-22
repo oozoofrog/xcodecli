@@ -19,3 +19,30 @@ func resolveOptions(
     try effective.validate()
     return (effective, resolved)
 }
+
+/// Build an AgentRequest from CLI flags, resolving environment and session in one step.
+func buildBridgeRequest(
+    env: [String: String],
+    xcodePID: String?,
+    sessionID: String?,
+    timeout: TimeInterval,
+    debug: Bool
+) throws -> AgentRequest {
+    let (effective, _) = try resolveOptions(env: env, xcodePID: xcodePID, sessionID: sessionID)
+    let bridgeEnv = EnvOptions.applyOverrides(baseEnv: env, opts: effective)
+    return buildAgentRequest(env: bridgeEnv, effective: effective, timeout: timeout, debug: debug)
+}
+
+/// Convenience overload that reads the process environment automatically.
+func buildBridgeRequest(
+    xcodePID: String?,
+    sessionID: String?,
+    timeout: TimeInterval,
+    debug: Bool
+) throws -> AgentRequest {
+    try buildBridgeRequest(
+        env: envDictionary(),
+        xcodePID: xcodePID, sessionID: sessionID,
+        timeout: timeout, debug: debug
+    )
+}

@@ -34,12 +34,8 @@ struct ToolCommand: AsyncParsableCommand {
         var debug = false
 
         func run() async throws {
-            let env = envDictionary()
-            let (effective, _) = try resolveOptions(env: env, xcodePID: xcodePID, sessionID: sessionID)
-            let bridgeEnv = EnvOptions.applyOverrides(baseEnv: env, opts: effective)
-
-            let request = buildAgentRequest(
-                env: bridgeEnv, effective: effective,
+            let request = try buildBridgeRequest(
+                xcodePID: xcodePID, sessionID: sessionID,
                 timeout: TimeInterval(timeout), debug: debug
             )
             let tools = try await AgentClient.listTools(request: request)
@@ -113,12 +109,8 @@ struct ToolCommand: AsyncParsableCommand {
             // Apply tool-specific default timeout if not explicitly set
             let effectiveTimeout = timeout ?? Int(TimeoutPolicy.defaultToolCallTimeout(toolName: name))
 
-            let env = envDictionary()
-            let (effective, _) = try resolveOptions(env: env, xcodePID: xcodePID, sessionID: sessionID)
-            let bridgeEnv = EnvOptions.applyOverrides(baseEnv: env, opts: effective)
-
-            let request = buildAgentRequest(
-                env: bridgeEnv, effective: effective,
+            let request = try buildBridgeRequest(
+                xcodePID: xcodePID, sessionID: sessionID,
                 timeout: TimeInterval(effectiveTimeout), debug: debug
             )
             let result = try await AgentClient.callTool(

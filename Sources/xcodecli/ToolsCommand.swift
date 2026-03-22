@@ -31,12 +31,8 @@ struct ToolsCommand: AsyncParsableCommand {
         var debug = false
 
         func run() async throws {
-            let env = envDictionary()
-            let (effective, _) = try resolveOptions(env: env, xcodePID: xcodePID, sessionID: sessionID)
-            let bridgeEnv = EnvOptions.applyOverrides(baseEnv: env, opts: effective)
-
-            let request = buildAgentRequest(
-                env: bridgeEnv, effective: effective,
+            let request = try buildBridgeRequest(
+                xcodePID: xcodePID, sessionID: sessionID,
                 timeout: TimeInterval(timeout), debug: debug
             )
             let tools = try await AgentClient.listTools(request: request)
