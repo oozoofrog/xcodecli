@@ -44,31 +44,18 @@ struct ToolCommand: AsyncParsableCommand {
             )
             let tools = try await AgentClient.listTools(request: request)
 
-            guard let tool = tools.first(where: {
-                if case .object(let obj) = $0, case .string(let n) = obj["name"] { return n == name }
-                return false
-            }) else {
+            guard let tool = findToolByName(tools, name) else {
                 throw ValidationError("tool not found: \(name)")
             }
 
             if json {
-                let encoder = JSONEncoder()
-                encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-                let data = try encoder.encode(tool)
-                FileHandle.standardOutput.write(data)
-                FileHandle.standardOutput.write(Data("\n".utf8))
+                try writePrettyJSON(tool)
             } else if case .object(let obj) = tool {
-                let toolName = obj["name"].flatMap { if case .string(let s) = $0 { return s } else { return nil } } ?? ""
-                let desc = obj["description"].flatMap { if case .string(let s) = $0 { return s } else { return nil } } ?? ""
-                print("name: \(toolName)")
-                print("description: \(desc)")
+                print("name: \(toolName(tool))")
+                print("description: \(toolDescription(tool))")
                 print("inputSchema:")
                 if let schema = obj["inputSchema"] {
-                    let encoder = JSONEncoder()
-                    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-                    let data = try encoder.encode(schema)
-                    FileHandle.standardOutput.write(data)
-                    FileHandle.standardOutput.write(Data("\n".utf8))
+                    try writePrettyJSON(schema)
                 }
             }
         }
@@ -138,11 +125,7 @@ struct ToolCommand: AsyncParsableCommand {
                 request: request, name: name, arguments: arguments
             )
 
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            let data = try encoder.encode(result.result)
-            FileHandle.standardOutput.write(data)
-            FileHandle.standardOutput.write(Data("\n".utf8))
+            try writePrettyJSON(result.result)
 
             if result.isError {
                 throw ExitCode(1)
