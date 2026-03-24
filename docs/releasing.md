@@ -6,7 +6,10 @@
 2. Run the test/build checks locally:
    - `swift test`
    - `./scripts/build-swift.sh .tmp/xcodecli`
-   - `./.tmp/xcodecli version`
+   - `cp .tmp/xcodecli /tmp/xcodecli && /tmp/xcodecli version`
+     > **Note:** On external volumes (e.g. `/Volumes/...`), macOS may SIGKILL
+     > adhoc-signed binaries. Always copy to an internal path like `/tmp` before
+     > running the release binary.
 3. Create and push an annotated tag like `v1.0.0`.
 4. Publish the GitHub Release for that tag.
 5. The Homebrew release workflow updates the shared `oozoofrog/homebrew-tap` repository automatically.
