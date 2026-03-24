@@ -30,6 +30,10 @@
 - At least one Xcode project/workspace window should be open before using `tools` or mutating Xcode MCP tools.
 - In bridge mode, stdout is protocol-only. Human-readable logs belong on stderr.
 - For release and Homebrew work, destructive steps come last and dry-run/check steps come first.
+- This repo lives on an external volume. macOS SIGKILL adhoc-signed binaries on external volumes. Always test built binaries via one of:
+  - `cp .tmp/xcodecli /tmp/xcodecli && /tmp/xcodecli version`
+  - The Homebrew-installed binary at `/opt/homebrew/bin/xcodecli`
+  - `swift build` + `swift run` (debug builds are not affected)
 
 ## Context Tree Entry Points
 - `./AGENTS.md`: portable collaboration and triage rules.
