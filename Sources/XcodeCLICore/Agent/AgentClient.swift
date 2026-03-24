@@ -272,13 +272,14 @@ public enum AgentClient {
 
     private static func resolveExecutablePath() throws -> String {
         if let path = Bundle.main.executablePath {
-            let resolved = (try? FileManager.default.destinationOfSymbolicLink(atPath: path)) ?? path
-            return (resolved as NSString).standardizingPath
+            let url = URL(fileURLWithPath: path).resolvingSymlinksInPath()
+            return url.path
         }
         guard let argv0 = CommandLine.arguments.first, !argv0.isEmpty else {
             throw XcodeCLIError.bridgeSpawnFailed(underlying: "cannot resolve executable path")
         }
-        return (argv0 as NSString).standardizingPath
+        let url = URL(fileURLWithPath: argv0).resolvingSymlinksInPath()
+        return url.path
     }
 
     private static func isUnavailableError(_ error: Error) -> Bool {
