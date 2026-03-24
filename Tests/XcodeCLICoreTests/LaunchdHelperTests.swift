@@ -20,7 +20,7 @@ struct LaunchdHelperTests {
     @Test("CommandLaunchd with exit 0 passes correct launchctl args")
     func commandLaunchdSuccess() async throws {
         var runner = MockProcessRunner()
-        runner.results["launchctl print gui/501/io.test.svc"] = ProcessResult(
+        runner.results["/bin/launchctl print gui/501/io.test.svc"] = ProcessResult(
             stdout: "service info here", stderr: "", exitCode: 0
         )
         let launchd = CommandLaunchd(runner: runner)
@@ -31,7 +31,7 @@ struct LaunchdHelperTests {
     @Test("CommandLaunchd with exit 1 and stderr throws agentUnavailable")
     func commandLaunchdFailure() async {
         var runner = MockProcessRunner()
-        runner.results["launchctl print gui/501/bad"] = ProcessResult(
+        runner.results["/bin/launchctl print gui/501/bad"] = ProcessResult(
             stdout: "", stderr: "service not found", exitCode: 1
         )
         let launchd = CommandLaunchd(runner: runner)

@@ -34,7 +34,7 @@ public struct CommandLaunchd: LaunchdInterface, Sendable {
 
     @discardableResult
     private func runLaunchctl(_ args: String...) async throws -> String {
-        let result = try await runner.run("launchctl", arguments: args)
+        let result = try await runner.run("/bin/launchctl", arguments: args)
         if result.exitCode != 0 {
             let text = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 ? result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)

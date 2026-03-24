@@ -478,6 +478,6 @@ public final class AgentServer: @unchecked Sendable {
         guard !path.isEmpty else {
             throw XcodeCLIError.bridgeSpawnFailed(underlying: "cannot resolve executable path")
         }
-        return (path as NSString).standardizingPath
+        return URL(fileURLWithPath: path).resolvingSymlinksInPath().path
     }
 }
