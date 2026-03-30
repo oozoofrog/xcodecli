@@ -890,7 +890,8 @@ curl -fsSL https://raw.githubusercontent.com/oozoofrog/xcodecli/main/scripts/ins
 1. Merge into `main`
 2. Preview the release with `./scripts/release.sh vX.Y.Z --dry-run`
 3. Run `./scripts/release.sh vX.Y.Z`
-4. The script bumps version sources, runs local verification, pushes the release commit + tag, updates Homebrew, and creates the GitHub Release
+4. The script requires `origin=oozoofrog/xcodecli` and `HEAD == origin/main` before the version bump
+5. The script bumps version sources, runs local verification, atomically pushes the release commit + tag, updates Homebrew, and creates the GitHub Release
 
 ### 9.5 Homebrew
 - Tap repo: `oozoofrog/homebrew-tap`

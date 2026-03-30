@@ -67,7 +67,7 @@ xcodecli update
 
 The shared `oozoofrog/tap` repository can host multiple formulas and casks. `xcodecli` is published there as `Formula/xcodecli.rb`.
 
-Releases are cut locally on macOS via `./scripts/release.sh vX.Y.Z`. For a full procedure, dry-run example, or tap-only recovery path, see `docs/releasing.md` and `./scripts/release_homebrew.sh`.
+Releases are cut locally on macOS via `./scripts/release.sh vX.Y.Z`, but only from `main` when `origin` points to `oozoofrog/xcodecli` and `HEAD` exactly matches `origin/main`. For a full procedure, dry-run example, or tap-only recovery path, see `docs/releasing.md` and `./scripts/release_homebrew.sh`.
 
 For MCP authorization reuse, same-session behavior, and repeated-prompt recovery, see:
 - English: `docs/authorization-troubleshooting.md`

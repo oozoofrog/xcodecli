@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SWIFT_VERSION_FILE="${ROOT_DIR}/Sources/XcodeCLICore/Shared/Version.swift"
 GO_VERSION_FILE="${ROOT_DIR}/cmd/xcodecli/version.go"
+SOURCE_REPO="oozoofrog/xcodecli"
 
 TAG=""
 DRY_RUN=0
@@ -26,14 +27,15 @@ Examples:
 Behavior:
   - Bumps the source version in Swift and Go
   - Runs local verification commands
-  - Creates and pushes a release commit and annotated tag
+  - Creates and atomically pushes a release commit and annotated tag to the official origin
   - Updates the shared Homebrew tap locally via scripts/release_homebrew.sh
   - Creates a GitHub Release with generated notes
 
 Notes:
   - Releases must be cut from a clean tracked working tree on main
+  - origin must point to ${SOURCE_REPO}, and HEAD must exactly match origin/main before the version bump
   - If a failure happens before any push, local version changes are rolled back automatically
-  - After pushing main/tag, follow the printed recovery commands instead of expecting an auto-rollback
+  - After the atomic main+tag push, follow the printed recovery commands instead of expecting an auto-rollback
 USAGE
 }
 
@@ -59,12 +61,12 @@ restore_bumped_files() {
 
 print_remote_recovery() {
   cat >&2 <<RECOVERY
-[release] release failed after remote push started.
+[release] release failed after the atomic remote push completed.
 [release] manual recovery:
-[release]   - inspect main/tag state: git log --oneline -n 3 && git tag --list '${TAG}'
+[release]   - inspect remote state: git ls-remote --heads --tags origin main "refs/tags/${TAG}"
 [release]   - rerun Homebrew sync: ./scripts/release_homebrew.sh ${TAG} --push
 [release]   - create the GitHub Release manually if needed: gh release create ${TAG} --verify-tag --generate-notes
-[release]   - if the tag should be withdrawn, coordinate an explicit git revert/reset + tag deletion instead of relying on this script
+[release]   - if the release should be withdrawn, revert the pushed release commit and delete the remote tag together with explicit git commands
 RECOVERY
 }
 
@@ -111,6 +113,39 @@ extract_go_version() {
   sed -n 's/^const sourceVersion = "\(.*\)"$/\1/p' "$GO_VERSION_FILE" | head -n 1
 }
 
+normalize_github_slug() {
+  python3 - "$1" <<'PY'
+import sys
+
+url = sys.argv[1].strip()
+prefixes = [
+    "git@github.com:",
+    "ssh://git@github.com/",
+    "https://github.com/",
+    "http://github.com/",
+    "git://github.com/",
+]
+
+slug = None
+for prefix in prefixes:
+    if url.startswith(prefix):
+        slug = url[len(prefix):]
+        break
+
+if not slug:
+    raise SystemExit(1)
+
+slug = slug.strip("/")
+if slug.endswith(".git"):
+    slug = slug[:-4]
+parts = [part for part in slug.split("/") if part]
+if len(parts) != 2:
+    raise SystemExit(1)
+
+print("/".join(parts))
+PY
+}
+
 ensure_clean_tracked_tree() {
   local status
   status="$(git -C "$ROOT_DIR" status --porcelain --untracked-files=no)"
@@ -124,8 +159,30 @@ ensure_main_branch() {
   [[ "$branch" == "main" ]] || fail "releases must be cut from main (current branch: ${branch})"
 }
 
-ensure_origin_remote() {
-  git -C "$ROOT_DIR" remote get-url origin >/dev/null 2>&1 || fail "git remote 'origin' is required"
+ensure_official_origin_remote() {
+  local origin_url origin_slug
+  origin_url="$(git -C "$ROOT_DIR" config --get remote.origin.url 2>/dev/null || true)"
+  [[ -n "$origin_url" ]] || fail "git remote 'origin' is required"
+
+  origin_slug="$(normalize_github_slug "$origin_url" 2>/dev/null || true)"
+  [[ -n "$origin_slug" ]] || fail "origin must point to ${SOURCE_REPO}; unsupported GitHub URL: ${origin_url}"
+  [[ "$origin_slug" == "$SOURCE_REPO" ]] || fail "origin must point to ${SOURCE_REPO} before release (current: ${origin_url})"
+}
+
+fetch_release_refs() {
+  log "fetching origin/main and tags"
+  git -C "$ROOT_DIR" fetch --quiet origin main --tags
+}
+
+ensure_head_matches_origin_main() {
+  local head_sha origin_sha behind ahead
+  git -C "$ROOT_DIR" rev-parse --verify --quiet refs/remotes/origin/main >/dev/null || fail "origin/main is unavailable after fetch"
+
+  head_sha="$(git -C "$ROOT_DIR" rev-parse HEAD)"
+  origin_sha="$(git -C "$ROOT_DIR" rev-parse refs/remotes/origin/main)"
+  read -r behind ahead <<<"$(git -C "$ROOT_DIR" rev-list --left-right --count refs/remotes/origin/main...HEAD)"
+
+  [[ "$head_sha" == "$origin_sha" ]] || fail "HEAD must exactly match origin/main before release (behind=${behind}, ahead=${ahead}); fetch/rebase or drop unpublished local commits first"
 }
 
 ensure_tag_not_present() {
@@ -199,6 +256,7 @@ print_dry_run_plan() {
 [release] current version: ${CURRENT_VERSION}
 [release] target version:  ${TAG}
 [release] planned commands:
+[release]   git fetch origin main --tags
 [release]   bash ./scripts/check-version-sync.sh
 [release]   go test ./...
 [release]   swift test
@@ -207,8 +265,7 @@ print_dry_run_plan() {
 [release]   git add Sources/XcodeCLICore/Shared/Version.swift cmd/xcodecli/version.go
 [release]   git commit -m 'Bump version to ${TAG}'
 [release]   git tag -a '${TAG}' -m 'Release ${TAG}'
-[release]   git push origin main
-[release]   git push origin '${TAG}'
+[release]   git push --atomic origin main '${TAG}'
 [release]   ./scripts/release_homebrew.sh ${TAG} --push
 [release]   gh release create ${TAG} --verify-tag --generate-notes
 PLAN
@@ -248,9 +305,11 @@ require_cmd brew
 require_cmd curl
 require_cmd python3
 
-ensure_origin_remote
+ensure_official_origin_remote
 ensure_main_branch
 ensure_clean_tracked_tree
+fetch_release_refs
+ensure_head_matches_origin_main
 ensure_tag_not_present
 CURRENT_VERSION="$(extract_swift_version)"
 [[ -n "$CURRENT_VERSION" ]] || fail "failed to read current source version"
@@ -280,9 +339,8 @@ LOCAL_COMMIT_CREATED=1
 run_cmd "creating annotated tag ${TAG}" git tag -a "${TAG}" -m "Release ${TAG}"
 LOCAL_TAG_CREATED=1
 
-run_cmd "pushing main" git push origin main
+run_cmd "atomically pushing main and tag ${TAG}" git push --atomic origin main "${TAG}"
 REMOTE_MUTATED=1
-run_cmd "pushing tag ${TAG}" git push origin "${TAG}"
 run_cmd "updating shared Homebrew tap" ./scripts/release_homebrew.sh "${TAG}" --push
 run_cmd "creating GitHub Release" gh release create "${TAG}" --verify-tag --generate-notes
 

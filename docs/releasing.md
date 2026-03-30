@@ -4,20 +4,22 @@
 
 ## Standard local release flow
 
-1. `main` 브랜치에서 tracked working tree 가 깨끗한지 확인합니다.
+1. `origin` 이 `oozoofrog/xcodecli` 를 가리키고, `main` 브랜치의 tracked working tree 가 깨끗한지 확인합니다.
 2. 필수 도구가 준비되어 있는지 확인합니다: `git`, `gh`, `swift`, `go`, `brew`, `curl`.
 3. `gh auth status -h github.com` 이 통과하고, `git user.name` / `git user.email` 이 설정되어 있는지 확인합니다.
-4. 릴리스 계획을 먼저 확인합니다:
+4. `git fetch origin main --tags` 후 `HEAD == origin/main` 인지 확인합니다. 로컬 `main` 이 ahead/behind/diverged 상태면 릴리스를 중단해야 합니다.
+5. 릴리스 계획을 먼저 확인합니다:
    ```bash
    ./scripts/release.sh v1.2.1 --dry-run
    ```
-5. 실제 릴리스를 실행합니다:
+6. 실제 릴리스를 실행합니다:
    ```bash
    ./scripts/release.sh v1.2.1
    ```
 
 `./scripts/release.sh <tag>` 는 아래 순서로 작업합니다.
 
+- 공식 `origin` 과 `origin/main` 동기화 상태 검증
 - `Sources/XcodeCLICore/Shared/Version.swift` 와 `cmd/xcodecli/version.go` 버전 범프
 - `bash ./scripts/check-version-sync.sh`
 - `go test ./...`
@@ -25,13 +27,13 @@
 - `./scripts/build-swift.sh .tmp/xcodecli`
 - `cp .tmp/xcodecli /tmp/xcodecli && /tmp/xcodecli version`
 - `git commit -m "Bump version to vX.Y.Z"`
-- annotated tag 생성/푸시
+- annotated tag 생성 + `git push --atomic origin main vX.Y.Z`
 - `./scripts/release_homebrew.sh vX.Y.Z --push` 로 shared tap 반영
 - `gh release create vX.Y.Z --verify-tag --generate-notes`
 
 실패 시 규칙:
 - 원격 push 전에 실패하면 로컬 version 변경은 자동으로 되돌립니다.
-- `main` 또는 tag 가 이미 푸시된 뒤 실패하면 자동 롤백하지 않고, 스크립트가 복구 명령을 출력합니다.
+- atomic main+tag push 가 끝난 뒤 실패하면 자동 롤백하지 않고, 스크립트가 복구 명령을 출력합니다.
 
 ## Low-level Homebrew dry-run / recovery
 

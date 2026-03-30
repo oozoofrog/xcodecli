@@ -890,7 +890,8 @@ curl -fsSL https://raw.githubusercontent.com/oozoofrog/xcodecli/main/scripts/ins
 1. `main` merge
 2. `./scripts/release.sh vX.Y.Z --dry-run` 으로 릴리스 계획 확인
 3. `./scripts/release.sh vX.Y.Z` 실행
-4. 스크립트가 version source 범프, local verify, release commit + tag push, Homebrew 반영, GitHub Release 생성을 순서대로 처리
+4. version 범프 전에 `origin=oozoofrog/xcodecli` 와 `HEAD == origin/main` 을 강제 확인
+5. 스크립트가 version source 범프, local verify, release commit + tag atomic push, Homebrew 반영, GitHub Release 생성을 순서대로 처리
 
 ### 9.5 Homebrew
 - tap repo: `oozoofrog/homebrew-tap`
