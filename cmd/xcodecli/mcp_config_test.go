@@ -52,8 +52,8 @@ func TestParseCLIMCPConfigClaudeDefaultsScope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseCLI returned error: %v", err)
 	}
-	if cfg.Scope != "local" {
-		t.Fatalf("scope = %q, want local", cfg.Scope)
+	if cfg.Scope != "user" {
+		t.Fatalf("scope = %q, want user", cfg.Scope)
 	}
 }
 
@@ -93,7 +93,7 @@ func TestParseCLIHelpMCPConfig(t *testing.T) {
 	if err != errUsageRequested {
 		t.Fatalf("err = %v, want errUsageRequested", err)
 	}
-	for _, want := range []string{"mcp config", "--client <claude|codex|gemini>", "--mode <agent|bridge>", "--strict-stable-path", "--write"} {
+	for _, want := range []string{"mcp config", "--client <claude|codex|gemini>", "--mode <agent|bridge>", "--strict-stable-path", "--install"} {
 		if !strings.Contains(usage, want) {
 			t.Fatalf("usage missing %q: %s", want, usage)
 		}
@@ -105,7 +105,7 @@ func TestParseCLIHelpMCPCodex(t *testing.T) {
 	if err != errUsageRequested {
 		t.Fatalf("err = %v, want errUsageRequested", err)
 	}
-	for _, want := range []string{"mcp codex", "shorthand alias", "--mode <agent|bridge>", "--write"} {
+	for _, want := range []string{"mcp codex", "shorthand alias", "--mode <agent|bridge>", "--install"} {
 		if !strings.Contains(usage, want) {
 			t.Fatalf("usage missing %q: %s", want, usage)
 		}
@@ -157,7 +157,7 @@ func TestRunMCPConfigTextCodex(t *testing.T) {
 			"MCP_XCODE_PID=123",
 			"MCP_XCODE_SESSION_ID=11111111-1111-1111-1111-111111111111",
 			"codex mcp add xcodecli --env MCP_XCODE_PID=123 --env MCP_XCODE_SESSION_ID=11111111-1111-1111-1111-111111111111 -- /tmp/xcodecli-test serve",
-			"write requested: false",
+			"install requested: false",
 		} {
 			if !strings.Contains(text, want) {
 				t.Fatalf("output missing %q: %s", want, text)
@@ -230,7 +230,7 @@ func TestRunMCPConfigJSONWriteCodex(t *testing.T) {
 			"mcp", "config",
 			"--client", "codex",
 			"--session-id", "11111111-1111-1111-1111-111111111111",
-			"--write",
+			"--install",
 			"--json",
 		}, strings.NewReader(""), &stdout, &stderr, os.Environ())
 		if code != 0 {
@@ -249,11 +249,11 @@ func TestRunMCPConfigJSONWriteCodex(t *testing.T) {
 		if result.Server.Command != "/tmp/xcodecli-test" || !reflect.DeepEqual(result.Server.Args, []string{"serve"}) {
 			t.Fatalf("unexpected server spec: %+v", result.Server)
 		}
-		if result.Write.ExitCode != 0 || !result.Write.Executed || !strings.Contains(result.Write.Stdout, "Added global MCP server") {
-			t.Fatalf("unexpected write result: %+v", result.Write)
+		if result.Install.ExitCode != 0 || !result.Install.Executed || !strings.Contains(result.Install.Stdout, "Added global MCP server") {
+			t.Fatalf("unexpected write result: %+v", result.Install)
 		}
-		if result.Write.Stderr != "" {
-			t.Fatalf("unexpected write stderr: %q", result.Write.Stderr)
+		if result.Install.Stderr != "" {
+			t.Fatalf("unexpected write stderr: %q", result.Install.Stderr)
 		}
 	})
 }
@@ -291,12 +291,12 @@ func TestRunMCPConfigWriteClaudeReplacesExistingServer(t *testing.T) {
 			calls = append(calls, name+" "+strings.Join(args, " "))
 			switch len(calls) {
 			case 1:
-				if name != "claude" || args[0] != "mcp" || args[1] != "add-json" || args[3] != "local" {
+				if name != "claude" || args[0] != "mcp" || args[1] != "add-json" || args[3] != "user" {
 					t.Fatalf("unexpected first claude command: %s %v", name, args)
 				}
 				return externalCommandResult{ExitCode: 1, Stderr: "MCP server xcodecli already exists in local config"}, nil
 			case 2:
-				want := []string{"mcp", "remove", "-s", "local", "xcodecli"}
+				want := []string{"mcp", "remove", "-s", "user", "xcodecli"}
 				if name != "claude" || !reflect.DeepEqual(args, want) {
 					t.Fatalf("unexpected remove command: %s %v", name, args)
 				}
@@ -317,7 +317,7 @@ func TestRunMCPConfigWriteClaudeReplacesExistingServer(t *testing.T) {
 		code := run(context.Background(), []string{
 			"mcp", "config",
 			"--client", "claude",
-			"--write",
+			"--install",
 			"--json",
 		}, strings.NewReader(""), &stdout, &stderr, os.Environ())
 		if code != 0 {
@@ -330,14 +330,14 @@ func TestRunMCPConfigWriteClaudeReplacesExistingServer(t *testing.T) {
 		if err := json.Unmarshal([]byte(stdout.String()), &result); err != nil {
 			t.Fatalf("stdout is not JSON result: %v", err)
 		}
-		if result.Scope != "local" {
+		if result.Scope != "user" {
 			t.Fatalf("scope = %q, want local", result.Scope)
 		}
-		if !result.Write.Executed || result.Write.ExitCode != 0 {
-			t.Fatalf("unexpected write result: %+v", result.Write)
+		if !result.Install.Executed || result.Install.ExitCode != 0 {
+			t.Fatalf("unexpected write result: %+v", result.Install)
 		}
-		if !strings.Contains(result.Write.Stderr, "already exists") || !strings.Contains(result.Write.Stdout, "Removed xcodecli") || !strings.Contains(result.Write.Stdout, "Added stdio MCP server") {
-			t.Fatalf("unexpected merged outputs: %+v", result.Write)
+		if !strings.Contains(result.Install.Stderr, "already exists") || !strings.Contains(result.Install.Stdout, "Removed xcodecli") || !strings.Contains(result.Install.Stdout, "Added stdio MCP server") {
+			t.Fatalf("unexpected merged outputs: %+v", result.Install)
 		}
 	})
 }
@@ -365,7 +365,7 @@ func TestRunMCPConfigWriteClaudeRetriesWhenRemoveSaysNotFound(t *testing.T) {
 		code := run(context.Background(), []string{
 			"mcp", "config",
 			"--client", "claude",
-			"--write",
+			"--install",
 			"--json",
 		}, strings.NewReader(""), &stdout, &stderr, os.Environ())
 		if code != 0 {
@@ -399,7 +399,7 @@ func TestHelperFunctionsForMCPConfigFormatting(t *testing.T) {
 			Env:     map[string]string{"MCP_XCODE_PID": "123"},
 		},
 		DisplayCommand: "codex mcp add xcodecli -- /tmp/xcodecli serve",
-		Write: mcpConfigWriteResult{
+		Install: mcpConfigInstallResult{
 			Requested: true,
 			Executed:  true,
 			ExitCode:  0,
@@ -407,7 +407,7 @@ func TestHelperFunctionsForMCPConfigFormatting(t *testing.T) {
 			Stderr:    "err one\nerr two\n",
 		},
 	})
-	for _, want := range []string{"mode: agent", "write stdout:", "  line one", "  line two", "write stderr:", "  err one", "  err two"} {
+	for _, want := range []string{"mode: agent", "install stdout:", "  line one", "  line two", "install stderr:", "  err one", "  err two"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("formatted output missing %q: %s", want, text)
 		}
@@ -425,7 +425,7 @@ func TestRunMCPConfigWriteMissingClientBinaryReturnsStructuredJSON(t *testing.T)
 		code := run(context.Background(), []string{
 			"mcp", "config",
 			"--client", "codex",
-			"--write",
+			"--install",
 			"--json",
 		}, strings.NewReader(""), &stdout, &stderr, os.Environ())
 		if code != 1 {
@@ -438,11 +438,11 @@ func TestRunMCPConfigWriteMissingClientBinaryReturnsStructuredJSON(t *testing.T)
 		if err := json.Unmarshal([]byte(stdout.String()), &result); err != nil {
 			t.Fatalf("stdout is not JSON result: %v", err)
 		}
-		if result.Write.Executed {
+		if result.Install.Executed {
 			t.Fatalf("write executed = true, want false")
 		}
-		if !strings.Contains(result.Write.Stderr, "codex CLI not found on PATH") {
-			t.Fatalf("unexpected write stderr: %+v", result.Write)
+		if !strings.Contains(result.Install.Stderr, "codex CLI not found on PATH") {
+			t.Fatalf("unexpected write stderr: %+v", result.Install)
 		}
 	})
 }
