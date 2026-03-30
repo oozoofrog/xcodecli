@@ -14,7 +14,7 @@ private struct MCPConfigOutput: Decodable {
     let displayCommand: String
     let warnings: [String]?
     let suggestedExecutablePath: String?
-    let write: WriteResult
+    let install: InstallResult
 
     struct ServerSpec: Decodable {
         let command: String
@@ -22,7 +22,7 @@ private struct MCPConfigOutput: Decodable {
         let env: [String: String]
     }
 
-    struct WriteResult: Decodable {
+    struct InstallResult: Decodable {
         let requested: Bool
         let executed: Bool
         let exitCode: Int
@@ -103,11 +103,11 @@ struct MCPConfigTests {
         #expect(output.scope == nil)
     }
 
-    @Test("claude config defaults to local scope")
+    @Test("claude config defaults to user scope")
     func claudeDefaultScope() async throws {
         let result = try await runCLI(["mcp", "config", "--client", "claude", "--json"])
         let output = try decodeMCPConfig(result.stdout)
-        #expect(output.scope == "local")
+        #expect(output.scope == "user")
     }
 
     @Test("gemini config defaults to user scope")
@@ -196,12 +196,12 @@ struct MCPConfigTests {
         #expect(result.exitCode != 0)
     }
 
-    @Test("write result reports not requested when --write is absent")
-    func writeNotRequestedByDefault() async throws {
+    @Test("install result reports not requested when --install is absent")
+    func installNotRequestedByDefault() async throws {
         let result = try await runCLI(["mcp", "config", "--client", "codex", "--json"])
         let output = try decodeMCPConfig(result.stdout)
-        #expect(output.write.requested == false)
-        #expect(output.write.executed == false)
+        #expect(output.install.requested == false)
+        #expect(output.install.executed == false)
     }
 
     // MARK: - Helpers

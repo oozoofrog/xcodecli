@@ -126,6 +126,12 @@ sessionKey = {XcodePID, SessionID, DeveloperDir}
 ```
 Different combinations create separate backend `mcpbridge` processes, allowing multiplexing across different Xcode instances or sessions.
 
+Authorization reuse should be understood in terms of this pooled session key, not in terms of a terminal window or a one-time machine-wide grant. In practice:
+- repeated calls from different shells can still stay on the **same** pooled session if `XcodePID`, `SessionID`, and `DeveloperDir` stay unchanged
+- changing `--session-id`, `MCP_XCODE_PID`, `DEVELOPER_DIR`, or the registered `xcodecli` binary path can move the next request onto a fresh backend session
+- a fresh backend session may surface a fresh Xcode authorization prompt
+- therefore authorization reuse is only a **best-effort property within one pooled session**, not a guarantee across every possible session configuration
+
 #### Session lifecycle
 1. **Prepare**: `prepareSession(key)` looks up or creates a `pooledSession` for the key, increments `inFlight`, and clears the `retireWhenIdle` flag. Any other sessions with `inFlight == 0` are removed from the pool and returned for async abort.
 2. **Ensure client**: on first request for a session, `ensureClient()` spawns a new `xcrun mcpbridge` subprocess, applies environment overrides (`MCP_XCODE_PID`, `MCP_XCODE_SESSION_ID`, `DEVELOPER_DIR`), and runs MCP initialization.
@@ -469,7 +475,7 @@ xcodecli mcp config \
   [--mode <agent|bridge>] \
   [--name xcodecli] \
   [--scope SCOPE] \
-  [--write] \
+  [--install] \
   [--json] \
   [--xcode-pid PID] \
   [--session-id UUID]
@@ -478,7 +484,7 @@ xcodecli mcp config \
 #### Defaults
 - `mode = agent`
 - `name = xcodecli`
-- Claude scope default = `local`
+- Claude scope default = `user`
 - Gemini scope default = `user`
 
 #### Mode semantics
@@ -511,7 +517,7 @@ Payload shape:
 gemini mcp add -s <scope> <name> <xcodecli path> serve|bridge
 ```
 
-#### `--write` behavior
+#### `--install` behavior
 - Codex / Gemini: execute one add command
 - Claude: if add-json fails with `already exists`, remove and retry
 
@@ -820,6 +826,13 @@ Transport:
 - LaunchAgent startup
 - MCP session initialization
 - Authentication prompt wait time
+
+Operational guidance for minimizing repeated authorization prompts:
+- keep using one stable installed `xcodecli` path
+- prefer agent mode / `xcodecli serve` over raw bridge mode for long-lived MCP usage
+- reuse the default persistent session ID unless you intentionally want isolation
+- avoid changing `MCP_XCODE_PID` or `DEVELOPER_DIR` unless you intentionally want a different pooled session
+- avoid `agent stop` / `agent uninstall` during normal use, because they discard the warm backend session
 
 ### 8.2 Idle timeout
 - Default pooled `mcpbridge` session idle timeout: `24h`

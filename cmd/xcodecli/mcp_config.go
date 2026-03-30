@@ -29,7 +29,7 @@ type mcpConfigServerSpec struct {
 	Env     map[string]string `json:"env"`
 }
 
-type mcpConfigWriteResult struct {
+type mcpConfigInstallResult struct {
 	Requested bool   `json:"requested"`
 	Executed  bool   `json:"executed"`
 	ExitCode  int    `json:"exitCode"`
@@ -47,7 +47,7 @@ type mcpConfigResult struct {
 	DisplayCommand          string               `json:"displayCommand"`
 	Warnings                []string             `json:"warnings,omitempty"`
 	SuggestedExecutablePath string               `json:"suggestedExecutablePath,omitempty"`
-	Write                   mcpConfigWriteResult `json:"write"`
+	Install                 mcpConfigInstallResult `json:"install"`
 }
 
 type mcpCommandRunner func(ctx context.Context, name string, args []string) (externalCommandResult, error)
@@ -99,9 +99,9 @@ func runMCPConfig(ctx context.Context, cfg cliConfig, stdout, stderr io.Writer) 
 	}
 
 	exitCode := 0
-	if cfg.Write {
-		result.Write = performMCPConfigWrite(ctx, cfg, result)
-		if !result.Write.Executed || result.Write.ExitCode != 0 {
+	if cfg.Install {
+		result.Install = performMCPConfigInstall(ctx, cfg, result)
+		if !result.Install.Executed || result.Install.ExitCode != 0 {
 			exitCode = 1
 		}
 	}
@@ -146,8 +146,8 @@ func buildMCPConfigResult(cfg cliConfig, executablePath string) (mcpConfigResult
 		DisplayCommand:          shellQuoteCommand(command),
 		Warnings:                advisory.Warnings,
 		SuggestedExecutablePath: advisory.SuggestedExecutablePath,
-		Write: mcpConfigWriteResult{
-			Requested: cfg.Write,
+		Install: mcpConfigInstallResult{
+			Requested: cfg.Install,
 		},
 	}, nil
 }
@@ -199,43 +199,43 @@ func buildClaudeRemoveInvocation(cfg cliConfig) commandInvocation {
 	return commandInvocation{Name: "claude", Args: []string{"mcp", "remove", "-s", cfg.Scope, cfg.ConfigName}}
 }
 
-func performMCPConfigWrite(ctx context.Context, cfg cliConfig, result mcpConfigResult) mcpConfigWriteResult {
-	writeResult := result.Write
-	writeResult.Requested = true
+func performMCPConfigInstall(ctx context.Context, cfg cliConfig, result mcpConfigResult) mcpConfigInstallResult {
+	installResult := result.Install
+	installResult.Requested = true
 
 	invocation, err := buildMCPConfigInvocation(cfg, result.Server)
 	if err != nil {
-		writeResult.Stderr = err.Error()
-		return writeResult
+		installResult.Stderr = err.Error()
+		return installResult
 	}
 
 	switch cfg.MCPClient {
 	case "claude":
 		firstRun, firstErr := runInvocation(ctx, invocation)
-		mergeWriteResult(&writeResult, firstRun, firstErr)
+		mergeInstallResult(&installResult, firstRun, firstErr)
 		if firstErr == nil && firstRun.ExitCode == 0 {
-			return writeResult
+			return installResult
 		}
 		if !claudeAlreadyExists(firstRun, firstErr) {
-			return writeResult
+			return installResult
 		}
 
 		removeRun, removeErr := runInvocation(ctx, buildClaudeRemoveInvocation(cfg))
-		mergeWriteResult(&writeResult, removeRun, removeErr)
+		mergeInstallResult(&installResult, removeRun, removeErr)
 		if removeErr != nil {
-			return writeResult
+			return installResult
 		}
 		if removeRun.ExitCode != 0 && !claudeRemoveNotFound(removeRun) {
-			return writeResult
+			return installResult
 		}
 
 		retryRun, retryErr := runInvocation(ctx, invocation)
-		mergeWriteResult(&writeResult, retryRun, retryErr)
-		return writeResult
+		mergeInstallResult(&installResult, retryRun, retryErr)
+		return installResult
 	default:
 		runResult, runErr := runInvocation(ctx, invocation)
-		mergeWriteResult(&writeResult, runResult, runErr)
-		return writeResult
+		mergeInstallResult(&installResult, runResult, runErr)
+		return installResult
 	}
 }
 
@@ -243,7 +243,7 @@ func runInvocation(ctx context.Context, invocation commandInvocation) (externalC
 	return defaultMCPCommandRunner(ctx, invocation.Name, invocation.Args)
 }
 
-func mergeWriteResult(target *mcpConfigWriteResult, run externalCommandResult, err error) {
+func mergeInstallResult(target *mcpConfigInstallResult, run externalCommandResult, err error) {
 	if target == nil {
 		return
 	}
@@ -363,17 +363,17 @@ func formatMCPConfigResult(result mcpConfigResult) string {
 			fmt.Fprintf(&buf, "suggested executable path: %s\n", result.SuggestedExecutablePath)
 		}
 	}
-	fmt.Fprintf(&buf, "write requested: %t\n", result.Write.Requested)
-	if result.Write.Requested {
-		fmt.Fprintf(&buf, "write executed: %t\n", result.Write.Executed)
-		fmt.Fprintf(&buf, "write exit code: %d\n", result.Write.ExitCode)
-		if result.Write.Stdout != "" {
-			fmt.Fprintln(&buf, "write stdout:")
-			writeIndentedBlock(&buf, result.Write.Stdout)
+	fmt.Fprintf(&buf, "install requested: %t\n", result.Install.Requested)
+	if result.Install.Requested {
+		fmt.Fprintf(&buf, "install executed: %t\n", result.Install.Executed)
+		fmt.Fprintf(&buf, "install exit code: %d\n", result.Install.ExitCode)
+		if result.Install.Stdout != "" {
+			fmt.Fprintln(&buf, "install stdout:")
+			writeIndentedBlock(&buf, result.Install.Stdout)
 		}
-		if result.Write.Stderr != "" {
-			fmt.Fprintln(&buf, "write stderr:")
-			writeIndentedBlock(&buf, result.Write.Stderr)
+		if result.Install.Stderr != "" {
+			fmt.Fprintln(&buf, "install stderr:")
+			writeIndentedBlock(&buf, result.Install.Stderr)
 		}
 	}
 	return buf.String()

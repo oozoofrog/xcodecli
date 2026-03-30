@@ -32,8 +32,8 @@ struct MCPCommand: AsyncParsableCommand {
         @Option(name: .long, help: "Scope: local, user, or project")
         var scope: String?
 
-        @Flag(name: .long, help: "Execute the generated registration command")
-        var write = false
+        @Flag(name: .long, help: "Register the MCP server with the target client")
+        var install = false
 
         @Flag(name: .long, help: "Print a machine-readable plan/result object")
         var json = false
@@ -65,8 +65,8 @@ struct MCPCommand: AsyncParsableCommand {
                 )
             )
 
-            if write {
-                result.write = await performMCPConfigWrite(
+            if install {
+                result.install = await performMCPConfigInstall(
                     client: client, name: name,
                     scope: result.scope ?? "",
                     result: result
@@ -79,7 +79,7 @@ struct MCPCommand: AsyncParsableCommand {
                 print(formatMCPConfigResult(result))
             }
 
-            if write && (!result.write.executed || result.write.exitCode != 0) {
+            if install && (!result.install.executed || result.install.exitCode != 0) {
                 throw ExitCode(1)
             }
         }
@@ -93,7 +93,7 @@ struct MCPCommand: AsyncParsableCommand {
 
         @Option(name: .long, help: "MCP server mode") var mode: String = "agent"
         @Option(name: .long, help: "Server name") var name: String = "xcodecli"
-        @Flag(name: .long, help: "Execute command") var write = false
+        @Flag(name: .long, help: "Register the MCP server") var install = false
         @Flag(name: .long, help: "JSON output") var json = false
         @Flag(name: .customLong("strict-stable-path")) var strictStablePath = false
         @Option(name: .customLong("xcode-pid")) var xcodePID: String?
@@ -104,7 +104,7 @@ struct MCPCommand: AsyncParsableCommand {
             cmd.client = "codex"
             cmd.mode = mode
             cmd.name = name
-            cmd.write = write
+            cmd.install = install
             cmd.json = json
             cmd.strictStablePath = strictStablePath
             cmd.xcodePID = xcodePID
@@ -122,7 +122,7 @@ struct MCPCommand: AsyncParsableCommand {
         @Option(name: .long, help: "MCP server mode") var mode: String = "agent"
         @Option(name: .long, help: "Server name") var name: String = "xcodecli"
         @Option(name: .long, help: "Scope") var scope: String?
-        @Flag(name: .long, help: "Execute command") var write = false
+        @Flag(name: .long, help: "Register the MCP server") var install = false
         @Flag(name: .long, help: "JSON output") var json = false
         @Flag(name: .customLong("strict-stable-path")) var strictStablePath = false
         @Option(name: .customLong("xcode-pid")) var xcodePID: String?
@@ -134,7 +134,7 @@ struct MCPCommand: AsyncParsableCommand {
             cmd.mode = mode
             cmd.name = name
             cmd.scope = scope
-            cmd.write = write
+            cmd.install = install
             cmd.json = json
             cmd.strictStablePath = strictStablePath
             cmd.xcodePID = xcodePID
@@ -152,7 +152,7 @@ struct MCPCommand: AsyncParsableCommand {
         @Option(name: .long, help: "MCP server mode") var mode: String = "agent"
         @Option(name: .long, help: "Server name") var name: String = "xcodecli"
         @Option(name: .long, help: "Scope") var scope: String?
-        @Flag(name: .long, help: "Execute command") var write = false
+        @Flag(name: .long, help: "Register the MCP server") var install = false
         @Flag(name: .long, help: "JSON output") var json = false
         @Flag(name: .customLong("strict-stable-path")) var strictStablePath = false
         @Option(name: .customLong("xcode-pid")) var xcodePID: String?
@@ -164,7 +164,7 @@ struct MCPCommand: AsyncParsableCommand {
             cmd.mode = mode
             cmd.name = name
             cmd.scope = scope
-            cmd.write = write
+            cmd.install = install
             cmd.json = json
             cmd.strictStablePath = strictStablePath
             cmd.xcodePID = xcodePID
@@ -182,14 +182,14 @@ struct MCPConfigServerSpec: Codable {
     let env: [String: String]
 }
 
-struct MCPConfigWriteResult: Codable {
+struct MCPConfigInstallResult: Codable {
     var requested: Bool
     var executed: Bool
     var exitCode: Int
     var stdout: String
     var stderr: String
 
-    static let notRequested = MCPConfigWriteResult(
+    static let notRequested = MCPConfigInstallResult(
         requested: false, executed: false, exitCode: 0, stdout: "", stderr: ""
     )
 }
@@ -204,7 +204,7 @@ struct MCPConfigResult: Codable {
     let displayCommand: String
     let warnings: [String]
     let suggestedExecutablePath: String?
-    var write: MCPConfigWriteResult
+    var install: MCPConfigInstallResult
 }
 
 // MARK: - Config Building
@@ -212,7 +212,7 @@ struct MCPConfigResult: Codable {
 private func resolveScope(client: String, scope: String?) -> String {
     switch client.lowercased() {
     case "codex": return ""
-    case "claude": return scope ?? "local"
+    case "claude": return scope ?? "user"
     case "gemini": return scope ?? "user"
     default: return scope ?? ""
     }
@@ -289,7 +289,7 @@ private func buildMCPConfigResult(
         displayCommand: shellQuoteCommand(command),
         warnings: advisory.warnings,
         suggestedExecutablePath: advisory.suggestedExecutablePath,
-        write: MCPConfigWriteResult(requested: false, executed: false, exitCode: 0, stdout: "", stderr: "")
+        install: MCPConfigInstallResult(requested: false, executed: false, exitCode: 0, stdout: "", stderr: "")
     )
 }
 
@@ -384,10 +384,10 @@ private func envArgs(flagName: String, env: [String: String]) -> [String] {
 
 // MARK: - Write Execution
 
-private func performMCPConfigWrite(
+private func performMCPConfigInstall(
     client: String, name: String, scope: String, result: MCPConfigResult
-) async -> MCPConfigWriteResult {
-    var writeResult = MCPConfigWriteResult(
+) async -> MCPConfigInstallResult {
+    var installResult = MCPConfigInstallResult(
         requested: true, executed: false, exitCode: 0, stdout: "", stderr: ""
     )
 
@@ -397,34 +397,34 @@ private func performMCPConfigWrite(
             client: client, name: name, scope: scope, server: result.server
         )
     } catch {
-        writeResult.stderr = error.localizedDescription
-        return writeResult
+        installResult.stderr = error.localizedDescription
+        return installResult
     }
 
     switch client.lowercased() {
     case "claude":
         // Try add-json, if "already exists" then remove + retry
         let (firstResult, firstErr) = await runInvocation(invocation)
-        mergeWriteResult(&writeResult, run: firstResult, error: firstErr)
-        if firstErr == nil && firstResult.exitCode == 0 { return writeResult }
-        guard claudeAlreadyExists(run: firstResult, error: firstErr) else { return writeResult }
+        mergeInstallResult(&installResult, run: firstResult, error: firstErr)
+        if firstErr == nil && firstResult.exitCode == 0 { return installResult }
+        guard claudeAlreadyExists(run: firstResult, error: firstErr) else { return installResult }
 
         let removeInvocation = CommandInvocation(
             name: "claude", args: ["mcp", "remove", "-s", scope, name]
         )
         let (removeResult, removeErr) = await runInvocation(removeInvocation)
-        mergeWriteResult(&writeResult, run: removeResult, error: removeErr)
-        if removeErr != nil { return writeResult }
-        if removeResult.exitCode != 0 && !claudeRemoveNotFound(run: removeResult) { return writeResult }
+        mergeInstallResult(&installResult, run: removeResult, error: removeErr)
+        if removeErr != nil { return installResult }
+        if removeResult.exitCode != 0 && !claudeRemoveNotFound(run: removeResult) { return installResult }
 
         let (retryResult, retryErr) = await runInvocation(invocation)
-        mergeWriteResult(&writeResult, run: retryResult, error: retryErr)
-        return writeResult
+        mergeInstallResult(&installResult, run: retryResult, error: retryErr)
+        return installResult
 
     default:
         let (runResult, runErr) = await runInvocation(invocation)
-        mergeWriteResult(&writeResult, run: runResult, error: runErr)
-        return writeResult
+        mergeInstallResult(&installResult, run: runResult, error: runErr)
+        return installResult
     }
 }
 
@@ -457,7 +457,7 @@ private func runInvocation(_ invocation: CommandInvocation) async -> (ExternalCo
     }
 }
 
-private func mergeWriteResult(_ target: inout MCPConfigWriteResult, run: ExternalCommandResult, error: Error?) {
+private func mergeInstallResult(_ target: inout MCPConfigInstallResult, run: ExternalCommandResult, error: Error?) {
     if let error {
         target.stderr = joinOutput(target.stderr, error.localizedDescription)
         return
@@ -536,19 +536,19 @@ private func formatMCPConfigResult(_ result: MCPConfigResult) -> String {
             lines.append("suggested executable path: \(suggested)")
         }
     }
-    lines.append("write requested: \(result.write.requested)")
-    if result.write.requested {
-        lines.append("write executed: \(result.write.executed)")
-        lines.append("write exit code: \(result.write.exitCode)")
-        if !result.write.stdout.isEmpty {
-            lines.append("write stdout:")
-            for line in result.write.stdout.split(separator: "\n", omittingEmptySubsequences: false) {
+    lines.append("install requested: \(result.install.requested)")
+    if result.install.requested {
+        lines.append("install executed: \(result.install.executed)")
+        lines.append("install exit code: \(result.install.exitCode)")
+        if !result.install.stdout.isEmpty {
+            lines.append("install stdout:")
+            for line in result.install.stdout.split(separator: "\n", omittingEmptySubsequences: false) {
                 lines.append("  \(line)")
             }
         }
-        if !result.write.stderr.isEmpty {
-            lines.append("write stderr:")
-            for line in result.write.stderr.split(separator: "\n", omittingEmptySubsequences: false) {
+        if !result.install.stderr.isEmpty {
+            lines.append("install stderr:")
+            for line in result.install.stderr.split(separator: "\n", omittingEmptySubsequences: false) {
                 lines.append("  \(line)")
             }
         }

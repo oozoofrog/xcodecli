@@ -126,6 +126,12 @@ sessionKey = {XcodePID, SessionID, DeveloperDir}
 ```
 조합이 다르면 별도의 backend `mcpbridge` 프로세스가 생성되어, 서로 다른 Xcode 인스턴스/세션에 대한 multiplexing이 가능하다.
 
+인증 재사용은 터미널 창 기준이나 머신 전체 one-time grant 기준이 아니라, 이 pooled session key 기준으로 이해해야 한다. 실무적으로는:
+- 서로 다른 셸/CLI 프로세스에서도 `XcodePID`, `SessionID`, `DeveloperDir`가 같으면 **같은** pooled session을 계속 사용할 수 있다
+- `--session-id`, `MCP_XCODE_PID`, `DEVELOPER_DIR`, 등록된 `xcodecli` binary path 중 하나라도 바뀌면 다음 요청이 fresh backend session으로 이동할 수 있다
+- fresh backend session에서는 새로운 Xcode authorization prompt가 다시 나타날 수 있다
+- 따라서 인증 재사용은 **하나의 pooled session 안에서만 best-effort로 기대할 수 있는 성질**이지, 모든 세션 구성에서 항상 보장되는 전역 권한으로 보면 안 된다
+
 #### session 수명 주기
 1. **Prepare**: `prepareSession(key)`가 해당 key의 `pooledSession`을 조회하거나 새로 생성하고, `inFlight`를 증가시키고 `retireWhenIdle` 플래그를 해제한다. `inFlight == 0`인 다른 세션은 pool에서 제거하여 비동기 abort 대상으로 반환한다.
 2. **Ensure client**: 세션의 첫 요청 시 `ensureClient()`가 `xcrun mcpbridge` subprocess를 생성하고, 환경 변수 override(`MCP_XCODE_PID`, `MCP_XCODE_SESSION_ID`, `DEVELOPER_DIR`)를 적용한 뒤 MCP 초기화를 수행한다.
@@ -469,7 +475,7 @@ xcodecli mcp config \
   [--mode <agent|bridge>] \
   [--name xcodecli] \
   [--scope SCOPE] \
-  [--write] \
+  [--install] \
   [--json] \
   [--xcode-pid PID] \
   [--session-id UUID]
@@ -478,7 +484,7 @@ xcodecli mcp config \
 #### 기본값
 - `mode = agent`
 - `name = xcodecli`
-- Claude scope default = `local`
+- Claude scope default = `user`
 - Gemini scope default = `user`
 
 #### mode 의미
@@ -511,7 +517,7 @@ payload shape:
 gemini mcp add -s <scope> <name> <xcodecli path> serve|bridge
 ```
 
-#### `--write` 동작
+#### `--install` 동작
 - Codex/Gemini: 1회 add command 실행
 - Claude: add-json 실패 메시지가 `already exists`면 remove 후 retry
 
@@ -820,6 +826,13 @@ LaunchAgent 설치/실행/세션 상태 확인
 - LaunchAgent startup
 - MCP session initialization
 - auth prompt 대기
+
+반복 인증 최소화를 위한 운영 규칙:
+- 하나의 stable installed `xcodecli` path를 계속 사용한다
+- 장기 MCP 사용에는 raw bridge mode보다 agent mode / `xcodecli serve`를 우선한다
+- 특별한 격리가 필요하지 않다면 기본 persistent session ID를 재사용한다
+- 다른 pooled session이 꼭 필요한 경우가 아니라면 `MCP_XCODE_PID`, `DEVELOPER_DIR`를 바꾸지 않는다
+- 정상 사용 중에는 `agent stop` / `agent uninstall`를 피하고, 복구/트러블슈팅 때만 사용한다
 
 ### 8.2 idle timeout
 - pooled `mcpbridge` session idle timeout 기본값: `24h`
